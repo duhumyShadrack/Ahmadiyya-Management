@@ -1,0 +1,82 @@
+/* Global reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Body styling */
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #111;
+  color: #eee;
+  line-height: 1.6;
+}
+
+/* Headings */
+h1, h2, h3, h4 {
+  color: #C0C0C0;
+  margin-bottom: 1rem;
+}
+
+/* Navigation bar */
+nav {
+  background: #6A0DAD;
+  padding: 1rem;
+  display: flex;
+  gap: 1rem;
+}
+
+nav a {
+  color: #fff;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+
+/* Cards */
+.card {
+  background: #222;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+}
+
+/* Buttons */
+button {
+  background: #6A0DAD;
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+button:hover {
+  background: #8A2BE2;
+}
+
+/* Inputs */
+input {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 10px;
+  border-radius: 6px;
+  border: none;
+  width: 100%;
+  background: #222;
+  color: #eee;
+}
+
+/* Charts */
+canvas {
+  background: #222;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 8px;
+}
