@@ -1,0 +1,17 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Next.js
+.next
+out
+
+# Env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# Misc
+.DS_Store
