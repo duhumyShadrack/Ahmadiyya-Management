@@ -1,0 +1,11 @@
+
+{
+"name":"ahmadiyya-management",
+"private":true,
+"workspaces":["apps/*"],
+"scripts":{
+"dev":"next dev apps/web",
+"build":"next build apps/web",
+"start":"next start apps/web"
+}
+}
