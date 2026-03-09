@@ -273,3 +273,35 @@ create policy "Ops manage job sites"
 create policy "Drivers view job sites"
   on job_sites for select
   using ((select role from profiles where id = auth.uid()) = 'driver');
+
+  -- Replace or extend 'orders' with generic 'tasks' or 'jobs'
+alter table orders rename to jobs;
+
+alter table jobs
+  rename column description to details,
+  rename column amount to price,
+  add column service_type text default 'general',  -- e.g., delivery, cleaning, repair
+  add column category text,                         -- e.g., plumbing, electrical
+  add column scheduled_start timestamptz,
+  add column scheduled_end timestamptz,
+  add column priority integer default 0,
+  add column estimated_duration_minutes integer;
+
+-- Generic assignees (not just drivers)
+alter table jobs add column assignee_id uuid references profiles(id);
+
+-- Service catalog (for monetization & customization)
+create table service_types (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null unique,          -- "Delivery", "Home Cleaning", "Handyman Repair"
+  description text,
+  default_price numeric,
+  estimated_duration_minutes integer,
+  requires_vehicle boolean default false,
+  requires_license boolean default false,
+  created_at timestamptz default now()
+);
+
+-- Job sites / geofences remain generic (already good)
+-- Time clock entries already generic (user_id + location + timestamp)
+-- Fleet vehicles already generic
