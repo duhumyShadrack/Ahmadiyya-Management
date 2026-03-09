@@ -216,3 +216,38 @@ create index if not exists idx_time_clock_timestamp on time_clock_entries(timest
 -- Insert a default office/job site (run once)
 insert into job_sites (name, latitude, longitude, radius_meters, address)
 values ('Main Office', 17.5046, -88.1962, 200, 'Belize City HQ');  -- adjust coords
+
+create table fleet_vehicles (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null, -- e.g., 'Truck #1'
+  model text,
+  year integer,
+  mileage numeric default 0,
+  last_maintenance timestamptz,
+  assigned_driver_id uuid references profiles(id),
+  created_at timestamptz default now()
+);
+
+create table fleet_maintenance (
+  id uuid primary key default uuid_generate_v4(),
+  vehicle_id uuid references fleet_vehicles(id) not null,
+  type text not null, -- e.g., 'oil change', 'tire rotation'
+  scheduled_date timestamptz not null,
+  completed_date timestamptz,
+  mileage_at_service numeric,
+  notes text,
+  cost numeric,
+  created_at timestamptz default now()
+);
+
+-- RLS
+alter table fleet_vehicles enable row level security;
+alter table fleet_maintenance enable row level security;
+
+-- Admins/managers view/add
+create policy "Ops view fleet"
+  on fleet_vehicles for all
+  using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
+create policy "Ops view maintenance"
+  on fleet_maintenance for all
+  using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
