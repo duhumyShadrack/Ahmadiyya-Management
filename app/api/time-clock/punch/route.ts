@@ -79,3 +79,40 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
 
   return R * c;
 }
+// ... inside POST handler, after auth & validation
+
+// Fetch active job sites or default office
+const { data: sites } = await supabase
+  .from('job_sites')
+  .select('id, name, latitude, longitude, radius_meters')
+  .order('name');
+
+if (!sites || sites.length === 0) {
+  return NextResponse.json({ error: 'No job sites configured – contact admin' }, { status: 400 });
+}
+
+// For simplicity, use the first site as default office (or require job_site_id from client)
+const site = sites[0]; // change to body.job_site_id lookup if you add dropdown
+
+const distance = getDistanceInMeters(latitude, longitude, site.latitude, site.longitude);
+
+if (distance > (site.radius_meters || 200)) {
+  return NextResponse.json(
+    { error: `You must be within ${site.radius_meters || 200}m of ${site.name} to punch` },
+    { status: 403 }
+  );
+}
+
+// Proceed with insert
+const { error } = await supabase.from('time_clock_entries').insert({
+  user_id: user.id,
+  type,
+  latitude,
+  longitude,
+  accuracy,
+  job_site_id: site.id, // record which site was used for verification
+});
+
+if (error) return NextResponse.json({ error: 'Failed to record punch' }, { status: 500 });
+
+return NextResponse.json({ success: true, message: `Clocked ${type.toUpperCase()} at ${site.name}` });
