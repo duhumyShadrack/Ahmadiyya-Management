@@ -168,3 +168,47 @@ create policy "Drivers punch in/out"
 create policy "Admins view all punches"
   on time_clock_entries for select
   using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
+
+-- Time clock entries with location proof
+create table if not exists time_clock_entries (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid references auth.users(id) not null,
+  type text not null check (type in ('in', 'out')),
+  timestamp timestamptz default now() not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  accuracy numeric,                    -- from geolocation.coords.accuracy (meters)
+  job_site_id uuid,                    -- optional foreign key
+  notes text,
+  created_at timestamptz default now()
+);
+
+-- Optional: predefined job sites / geofences
+create table if not exists job_sites (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  radius_meters numeric default 100,
+  address text,
+  created_at timestamptz default now()
+);
+
+-- RLS
+alter table time_clock_entries enable row level security;
+
+create policy "Drivers view own time clock entries"
+  on time_clock_entries for select
+  using (auth.uid() = user_id);
+
+create policy "Drivers can punch in/out"
+  on time_clock_entries for insert
+  with check (auth.uid() = user_id);
+
+create policy "Admins/managers view all time clock entries"
+  on time_clock_entries for select
+  using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
+
+-- Indexes for performance
+create index if not exists idx_time_clock_user_id on time_clock_entries(user_id);
+create index if not exists idx_time_clock_timestamp on time_clock_entries(timestamp);
