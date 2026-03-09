@@ -364,4 +364,23 @@ FROM invoices
 WHERE due_date >= CURRENT_DATE - INTERVAL '12 months'
 GROUP BY month
 ORDER BY month DESC;
-  
+
+  CREATE OR REPLACE FUNCTION monthly_collection_stats()
+RETURNS TABLE (
+  month text,
+  total_invoices bigint,
+  paid_invoices bigint,
+  success_rate numeric,
+  recovered_amount numeric
+) AS $$
+SELECT
+  TO_CHAR(due_date, 'YYYY-MM') AS month,
+  COUNT(*) AS total_invoices,
+  COUNT(CASE WHEN status = 'paid' THEN 1 END) AS paid_invoices,
+  ROUND((COUNT(CASE WHEN status = 'paid' THEN 1 END)::numeric / COUNT(*) * 100), 2) AS success_rate,
+  SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS recovered_amount
+FROM invoices
+WHERE due_date >= CURRENT_DATE - INTERVAL '12 months'
+GROUP BY month
+ORDER BY month DESC;
+$$ LANGUAGE sql;
