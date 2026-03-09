@@ -335,3 +335,12 @@ create policy "Others view services"
   created_at timestamptz default now(),
   pdf_url text -- link to generated PDF in storage
 );
+
+ alter table invoices
+  add column last_reminder_sent timestamptz,
+  add column reminder_count integer default 0,
+  add column collection_notes text,
+  add column escalated_to_human boolean default false,
+  add column whatsapp_thread_id text,   -- for WhatsApp conversation tracking
+  add column last_communication_at timestamptz; 
+  
