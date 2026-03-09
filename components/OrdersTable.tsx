@@ -30,8 +30,8 @@ interface OrdersTableProps {
   orders: Order[];
   drivers: Driver[];
   isAdmin: boolean;
-  isDriver?: boolean;           // optional – can be passed from dashboard
-  currentUserId?: string;       // required for driver status buttons
+  isDriver?: boolean;
+  currentUserId?: string;
 }
 
 export default function OrdersTable({
@@ -41,31 +41,29 @@ export default function OrdersTable({
   isDriver = false,
   currentUserId = '',
 }: OrdersTableProps) {
+  // ────────────────────────────────────────────────────────────────
+  // Helper: Update order status (called by driver action buttons)
+  // ────────────────────────────────────────────────────────────────
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    if (!confirm(`Change status to "${newStatus}"? This action cannot be undone easily.`)) {
-      return;
-    }
+    if (!confirm(`Change status to "${newStatus}"?`)) return;
 
-    try {
-      const response = await fetch(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
+    const res = await fetch(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
 
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to update status');
-      }
-
-      toast.success(`Order updated to ${newStatus}`);
-      // No need for manual refresh – realtime subscription in dashboard will update the table
-    } catch (err: any) {
-      toast.error(err.message || 'Could not update order status');
-      console.error(err);
+    if (res.ok) {
+      toast.success(`Order marked as ${newStatus}`);
+      // No manual refresh needed — realtime subscription in dashboard will update the UI
+    } else {
+      toast.error('Failed to update status');
     }
   };
 
+  // ────────────────────────────────────────────────────────────────
+  // Handler for admin assigning/unassigning a driver
+  // ────────────────────────────────────────────────────────────────
   const handleAssignDriver = async (orderId: string, driverId: string) => {
     if (!confirm('Assign this driver to the order?')) return;
 
@@ -76,7 +74,10 @@ export default function OrdersTable({
         body: JSON.stringify({ driver_id: driverId || null }),
       });
 
-      if (!response.ok) throw new Error('Failed to assign driver');
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to assign driver');
+      }
 
       toast.success('Driver assigned successfully');
     } catch (err: any) {
@@ -85,7 +86,7 @@ export default function OrdersTable({
   };
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+    <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm bg-white">
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
           <tr>
@@ -104,7 +105,8 @@ export default function OrdersTable({
             )}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+
+        <tbody className="divide-y divide-gray-200">
           {orders.map((order) => (
             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -118,7 +120,7 @@ export default function OrdersTable({
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm">
                 {order.customer?.balance != null ? (
-                  <span className={order.customer.balance >= 0 ? 'text-green-700' : 'text-red-700'}>
+                  <span className={order.customer.balance >= 0 ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>
                     ${order.customer.balance.toFixed(2)}
                   </span>
                 ) : '—'}
@@ -134,28 +136,28 @@ export default function OrdersTable({
                   </span>
                 )}
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm capitalize font-medium">
+              <td className="px-6 py-4 whitespace-nowrap text-sm capitalize font-medium text-gray-800">
                 {order.status}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                 {new Date(order.created_at).toLocaleDateString()}
               </td>
 
-              {/* Admin: Driver assignment */}
+              {/* Admin: Assign driver dropdown */}
               {isAdmin && (
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <select
                     value={order.driver_id || ''}
                     onChange={(e) => handleAssignDriver(order.id, e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Unassigned</option>
                     {drivers.length === 0 ? (
                       <option disabled>No drivers available</option>
                     ) : (
-                      drivers.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.email}
+                      drivers.map((driver) => (
+                        <option key={driver.id} value={driver.id}>
+                          {driver.email}
                         </option>
                       ))
                     )}
@@ -163,9 +165,9 @@ export default function OrdersTable({
                 </td>
               )}
 
-              {/* Driver: Status action buttons */}
+              {/* Driver: Status update buttons */}
               {isDriver && order.driver_id === currentUserId && (
-                <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                <td className="px-6 py-4 whitespace-nowrap text-sm space-x-3">
                   {order.status === 'assigned' && (
                     <button
                       onClick={() => updateOrderStatus(order.id, 'in_progress')}
@@ -174,6 +176,7 @@ export default function OrdersTable({
                       Start Delivery
                     </button>
                   )}
+
                   {order.status === 'in_progress' && (
                     <button
                       onClick={() => updateOrderStatus(order.id, 'delivered')}
@@ -182,12 +185,13 @@ export default function OrdersTable({
                       Mark Delivered
                     </button>
                   )}
+
                   {['assigned', 'in_progress'].includes(order.status) && (
                     <button
                       onClick={() => updateOrderStatus(order.id, 'cancelled')}
                       className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-xs font-medium transition-colors shadow-sm"
                     >
-                      Cancel Order
+                      Cancel
                     </button>
                   )}
                 </td>
