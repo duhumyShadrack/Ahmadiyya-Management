@@ -26,19 +26,16 @@ export default function Dashboard() {
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [punches, setPunches] = useState<any[]>([]);
   const [driverLocations, setDriverLocations] = useState<any[]>([]);
+  const [fleetVehicles, setFleetVehicles] = useState<any[]>([]);
+  const [fleetMaintenance, setFleetMaintenance] = useState<any[]>([]);
   const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Form states
-  const [newTeamEmail, setNewTeamEmail] = useState('');
-  const [newTeamRole, setNewTeamRole] = useState<'manager' | 'driver'>('driver');
-  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', address: '', email: '' });
-
   useEffect(() => {
     let isMounted = true;
 
-    const loadDashboard = async () => {
+    const loadData = async () => {
       try {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser || !isMounted) return;
@@ -65,7 +62,7 @@ export default function Dashboard() {
 
         if (cust?.id) setCustomerId(cust.id);
 
-        // Orders fetch
+        // Orders
         let ordQuery = supabase
           .from('orders')
           .select(`
@@ -99,7 +96,6 @@ export default function Dashboard() {
             .order('role, email');
           if (isMounted) setTeamMembers(team || []);
 
-          // Driver locations
           const { data: locs } = await supabase
             .from('driver_locations')
             .select('driver_id, latitude, longitude, last_updated');
@@ -108,6 +104,18 @@ export default function Dashboard() {
             email: team.find(m => m.id === l.driver_id)?.email || 'Driver'
           })) || [];
           if (isMounted) setDriverLocations(enriched);
+
+          const { data: vehicles } = await supabase
+            .from('fleet_vehicles')
+            .select('*')
+            .order('name');
+          if (isMounted) setFleetVehicles(vehicles || []);
+
+          const { data: maint } = await supabase
+            .from('fleet_maintenance')
+            .select('*')
+            .order('scheduled_date', { ascending: false });
+          if (isMounted) setFleetMaintenance(maint || []);
 
           // Unread notifications
           const { count } = await supabase
@@ -126,127 +134,74 @@ export default function Dashboard() {
       }
     };
 
-    loadDashboard();
+    loadData();
 
-    // Realtime: orders, notifications, punches, locations
-    const ordersChannel = supabase.channel('orders-live').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-      toast.info(`Order update: ${payload.eventType}`);
-      setOrders(prev => {
-        let updated = [...prev];
-        if (payload.eventType === 'INSERT') updated.unshift(payload.new);
-        else if (payload.eventType === 'UPDATE') {
-          const idx = updated.findIndex(o => o.id === payload.new.id);
-          if (idx !== -1) updated[idx] = payload.new;
-        } else if (payload.eventType === 'DELETE') {
-          updated = updated.filter(o => o.id !== payload.old.id);
-        }
-        return updated.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      });
-    }).subscribe();
+    // Realtime subscriptions (orders, notifications, punches, locations, fleet maintenance)
+    // ... (add your existing ones here)
 
-    const notifChannel = supabase.channel('notifs-live').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
-      if (payload.new.user_id === user?.id) {
-        setUnreadNotifs(prev => prev + 1);
-        toast.success(payload.new.title || 'New Notification', {
-          description: payload.new.body,
-          action: payload.new.order_id ? { label: 'View', onClick: () => router.push(`/orders/${payload.new.order_id}`) } : undefined,
+    // Example: realtime for fleet maintenance
+    const maintChannel = supabase
+      .channel('fleet-maintenance-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fleet_maintenance' }, (payload) => {
+        toast.info(`Fleet maintenance update: ${payload.eventType}`);
+        setFleetMaintenance(prev => {
+          let updated = [...prev];
+          if (payload.eventType === 'INSERT') updated.unshift(payload.new);
+          else if (payload.eventType === 'UPDATE') {
+            const idx = updated.findIndex(m => m.id === payload.new.id);
+            if (idx !== -1) updated[idx] = payload.new;
+          } else if (payload.eventType === 'DELETE') {
+            updated = updated.filter(m => m.id !== payload.old.id);
+          }
+          return updated;
         });
-      }
-    }).subscribe();
-
-    const punchChannel = supabase.channel('punches-live').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'time_clock_entries' }, (payload) => {
-      toast.info(`New ${payload.new.type.toUpperCase()} punch`);
-      setPunches(prev => [payload.new, ...prev]);
-    }).subscribe();
-
-    const locChannel = supabase.channel('locations-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_locations' }, (payload) => {
-      setDriverLocations(prev => {
-        const newLocs = [...prev];
-        const idx = newLocs.findIndex(l => l.driver_id === payload.new.driver_id);
-        if (idx !== -1) newLocs[idx] = payload.new;
-        else newLocs.push(payload.new);
-        return newLocs;
-      });
-    }).subscribe();
+      })
+      .subscribe();
 
     return () => {
-      supabase.removeChannel(ordersChannel);
-      supabase.removeChannel(notifChannel);
-      supabase.removeChannel(punchChannel);
-      supabase.removeChannel(locChannel);
+      // Cleanup channels
     };
   }, [supabase, router]);
 
-  // Admin: Invite team member
-  const handleInviteTeam = async (e: React.FormEvent) => {
+  // Admin: Add fleet vehicle
+  const handleAddVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTeamEmail) return toast.error('Email required');
-
-    const { error } = await supabase.auth.inviteUserByEmail(newTeamEmail);
-
-    if (error) {
-      toast.error('Invite failed: ' + error.message);
-      return;
-    }
-
-    toast.success(`Invitation sent to ${newTeamEmail} as ${newTeamRole}`);
-    setNewTeamEmail('');
+    // Implement form for name, model, year, etc.
   };
 
-  // Admin: Remove team member
-  const handleRemoveTeamMember = async (id: string, email: string) => {
-    if (!confirm(`Remove ${email}?`)) return;
-
-    const { error: authErr } = await supabase.auth.admin.deleteUser(id);
-    if (authErr) return toast.error('Delete failed');
-
-    await supabase.from('profiles').delete().eq('id', id);
-    toast.success(`${email} removed`);
-    setTeamMembers(prev => prev.filter(m => m.id !== id));
+  // Admin: Add maintenance schedule
+  const handleAddMaintenance = async (e: React.FormEvent) => {
+    e.preventForm();
+    // Implement form for vehicle_id, type, scheduled_date, etc.
   };
 
-  // Manager/Admin: Add customer
-  const handleAddCustomer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCustomer.name || !newCustomer.email) return toast.error('Name & email required');
-
-    const { error, data } = await supabase
-      .from('customers')
-      .insert({
-        name: newCustomer.name,
-        phone: newCustomer.phone || null,
-        address: newCustomer.address || null,
-        email: newCustomer.email,
-        balance: 0,
-        credit_approved: false,
-      })
-      .select()
-      .single();
-
-    if (error) return toast.error('Add failed');
-
-    toast.success('Customer added');
-    setCustomers(prev => [...prev, data]);
-    setNewCustomer({ name: '', phone: '', address: '', email: '' });
-  };
-
-  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
-
-  if (errorMsg) return <div className="p-8 text-center text-red-600">Error: {errorMsg}</div>;
+  // ... (keep your existing handlers: invite, remove, add customer)
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
-      {/* Header */}
+      {/* Header with notification bell */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
           {isAdmin ? 'Admin Control Center' : isManager ? 'Manager Dashboard' : isDriver ? 'Driver Dashboard' : 'Your Dashboard'}
         </h1>
 
-        {!isDriver && (
-          <a href="/orders/new" className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md font-medium shadow transition-colors">
-            + New Order
-          </a>
-        )}
+        <div className="relative">
+          <button className="p-2 text-gray-600 hover:text-gray-900 relative">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            {unreadNotifs > 0 && (
+              <span className="absolute -top-1 -right-1 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                {unreadNotifs}
+              </span>
+            )}
+          </button>
+          {/* Dropdown preview */}
+          <div className="absolute right-0 mt-2 w-72 bg-white rounded-md shadow-lg py-2 z-10 hidden">
+            {/* Fetch and show recent notifs */}
+            <p className="px-4 py-2 text-sm text-gray-600">No new notifications</p>
+          </div>
+        </div>
       </div>
 
       {/* Orders */}
@@ -278,7 +233,7 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Customers - Admin & Manager */}
+      {/* Customers */}
       {(isAdmin || isManager) && (
         <section className="mt-12">
           <h2 className="text-2xl font-semibold mb-4">Customers</h2>
@@ -290,7 +245,6 @@ export default function Dashboard() {
             <CustomerList customers={customers} isAdmin={isAdmin} />
           )}
 
-          {/* Add customer */}
           <div className="mt-8 bg-white p-6 rounded-lg shadow-md border border-gray-200">
             <h3 className="text-lg font-semibold mb-4">Add New Customer</h3>
             <form onSubmit={handleAddCustomer} className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -313,7 +267,7 @@ export default function Dashboard() {
               No team members yet.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border shadow-sm mb-8">
+            <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm mb-8">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -339,8 +293,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Invite team */}
-          <div className="bg-white p-6 rounded-lg shadow-md border">
+          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
             <h3 className="text-lg font-semibold mb-4">Invite New Team Member</h3>
             <form onSubmit={handleInviteTeam} className="flex flex-col md:flex-row gap-4">
               <input type="email" value={newTeamEmail} onChange={e => setNewTeamEmail(e.target.value)} placeholder="Email" required className="flex-1 border p-3 rounded" />
@@ -365,6 +318,120 @@ export default function Dashboard() {
           ) : (
             <AdminDriverMap locations={driverLocations} />
           )}
+        </section>
+      )}
+
+      {/* Admin: Punch Reports */}
+      {isAdmin && (
+        <section className="mt-12">
+          <h2 className="text-2xl font-semibold mb-4">Time Clock Reports</h2>
+          <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold">Summary (Last 30 Days)</h3>
+            </div>
+            <div className="p-6">
+              {punches.length === 0 ? (
+                <p className="text-gray-600 text-center py-8">No punch data yet.</p>
+              ) : (
+                <div className="space-y-6">
+                  {Object.entries(
+                    punches.reduce((acc: any, p: any) => {
+                      const userEmail = p.user?.email || 'Unknown';
+                      if (!acc[userEmail]) acc[userEmail] = [];
+                      acc[userEmail].push(p);
+                      return acc;
+                    }, {})
+                  ).map(([email, userPunches]: [string, any[]]) => {
+                    userPunches.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                    let totalHours = 0;
+                    for (let i = 0; i < userPunches.length; i += 2) {
+                      const inP = userPunches[i];
+                      const outP = userPunches[i + 1];
+                      if (inP?.type === 'in' && outP?.type === 'out') {
+                        const diff = new Date(outP.timestamp).getTime() - new Date(inP.timestamp).getTime();
+                        totalHours += diff / (1000 * 60 * 60);
+                      }
+                    }
+
+                    return (
+                      <div key={email} className="border-b pb-6 last:border-b-0">
+                        <h4 className="font-semibold text-lg mb-2">{email}</h4>
+                        <p className="text-xl font-bold text-blue-600 mb-3">
+                          Total hours: {totalHours.toFixed(2)}
+                        </p>
+                        <ul className="space-y-2 text-sm text-gray-700">
+                          {userPunches.map(p => (
+                            <li key={p.id}>
+                              {p.type.toUpperCase()} at {new Date(p.timestamp).toLocaleString()} – Lat/Lng: {p.latitude.toFixed(6)}, {p.longitude.toFixed(6)} (±{p.accuracy ? Math.round(p.accuracy) : 'N/A'}m)
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Admin: Fleet Maintenance Schedule */}
+      {isAdmin && (
+        <section className="mt-12">
+          <h2 className="text-2xl font-semibold mb-4">Fleet Maintenance Schedule</h2>
+          {fleetMaintenance.length === 0 ? (
+            <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+              No maintenance scheduled.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Vehicle</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Type</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Scheduled</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Completed</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Cost</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {fleetMaintenance.map(m => (
+                    <tr key={m.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {fleetVehicles.find(v => v.id === m.vehicle_id)?.name || 'Unknown'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm capitalize">{m.type}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">{new Date(m.scheduled_date).toLocaleDateString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">{m.completed_date ? new Date(m.completed_date).toLocaleDateString() : 'Pending'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">${m.cost?.toFixed(2) || '0.00'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Add new maintenance */}
+          <div className="mt-8 bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-lg font-semibold mb-4">Schedule New Maintenance</h3>
+            <form onSubmit={handleAddMaintenance} className="space-y-4">
+              <select placeholder="Vehicle" required className="border p-3 w-full rounded">
+                <option value="">Select Vehicle</option>
+                {fleetVehicles.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
+              <input placeholder="Type (e.g., oil change)" required className="border p-3 w-full rounded" />
+              <input type="date" placeholder="Scheduled Date" required className="border p-3 w-full rounded" />
+              <button type="submit" className="bg-blue-600 text-white py-3 w-full rounded hover:bg-blue-700">
+                Schedule
+              </button>
+            </form>
+          </div>
         </section>
       )}
     </div>
