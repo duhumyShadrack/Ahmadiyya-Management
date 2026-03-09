@@ -33,3 +33,4 @@ Order #{o.id} - {o.status}
 </main>
 )
 }
+<img src="/logo.png" alt="AHMAIYYA Logo" />
