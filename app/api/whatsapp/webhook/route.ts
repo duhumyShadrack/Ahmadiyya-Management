@@ -1,121 +1,89 @@
 // app/api/whatsapp/webhook/route.ts
+// app/api/whatsapp/webhook/route.ts
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
-  try {
-    const formData = await request.formData();
+  const formData = await request.formData();
 
-    // Twilio/WhatsApp payload keys (may vary slightly depending on provider)
-    const from = formData.get('From')?.toString();           // whatsapp:+5011234567
-    const body = formData.get('Body')?.toString()?.trim();   // user's message
-    const messageSid = formData.get('MessageSid')?.toString();
+  const from = formData.get('From')?.toString(); // whatsapp:+501...
+  const body = formData.get('Body')?.toString()?.trim().toLowerCase() || '';
 
-    if (!from || !body) {
-      return new Response('Missing parameters', { status: 400 });
-    }
-
-    // Normalize phone number (remove whatsapp: prefix)
-    const phone = from.replace('whatsapp:', '');
-
-    const supabase = createClient();
-
-    // 1. Find the customer by phone
-    const { data: customer, error: custErr } = await supabase
-      .from('customers')
-      .select('id, name, email')
-      .eq('phone', phone)
-      .maybeSingle();
-
-    if (custErr || !customer) {
-      console.error('No customer found for phone:', phone);
-      // Still return 200 – WhatsApp requires OK response
-      return new Response('OK', { status: 200 });
-    }
-
-    // 2. Find any relevant overdue invoices for this customer
-    const { data: overdueInvoices } = await supabase
-      .from('invoices')
-      .select('id, amount, due_date, status')
-      .eq('customer_id', customer.id)
-      .eq('status', 'pending')
-      .lt('due_date', new Date().toISOString());
-
-    if (!overdueInvoices?.length) {
-      // Optional: polite response if no overdue
-      await sendWhatsAppMessage(phone, `Hi ${customer.name}, thank you for your message. You have no overdue invoices at the moment.`);
-      return new Response('OK', { status: 200 });
-    }
-
-    // 3. Simple intent detection (expandable)
-    const msgLower = body.toLowerCase();
-
-    if (msgLower.includes('pay') || msgLower.includes('pagar') || msgLower === 'yes') {
-      // Send payment link (replace with real Stripe/PayPal/etc link)
-      const paymentLink = `https://pay.yourdomain.com/invoice/${overdueInvoices[0].id}`;
-      await sendWhatsAppMessage(
-        phone,
-        `Thank you ${customer.name}!\n\nPlease complete payment here:\n${paymentLink}\n\nAmount due: $${overdueInvoices[0].amount}`
-      );
-    } 
-    else if (msgLower.includes('info') || msgLower.includes('details') || msgLower.includes('cuánto')) {
-      const inv = overdueInvoices[0];
-      await sendWhatsAppMessage(
-        phone,
-        `Invoice #${inv.id}\nAmount: $${inv.amount}\nDue date: ${new Date(inv.due_date).toLocaleDateString()}\n\nReply PAY to get payment link.`
-      );
-    } 
-    else if (msgLower.includes('no') || msgLower.includes('cannot') || msgLower.includes('no puedo')) {
-      await sendWhatsAppMessage(
-        phone,
-        `Understood. We'll follow up with you soon regarding invoice #${overdueInvoices[0].id}.`
-      );
-      // Escalate / log
-      await supabase.from('collection_logs').insert({
-        customer_id: customer.id,
-        invoice_id: overdueInvoices[0].id,
-        message: body,
-        channel: 'whatsapp',
-        needs_human: true,
-      });
-    } 
-    else {
-      // Unknown reply → polite fallback + log
-      await sendWhatsAppMessage(
-        phone,
-        `Hi ${customer.name}, thank you for replying. Please use one of these:\n• PAY – get payment link\n• INFO – see invoice details`
-      );
-      await supabase.from('collection_logs').insert({
-        customer_id: customer.id,
-        invoice_id: overdueInvoices[0].id,
-        message: body,
-        channel: 'whatsapp',
-      });
-    }
-
-    return new Response('OK', { status: 200 });
-  } catch (err) {
-    console.error('WhatsApp webhook error:', err);
-    return new Response('OK', { status: 200 }); // Always return 200 to WhatsApp/Twilio
+  if (!from || !body) {
+    return new Response('Missing params', { status: 200 });
   }
+
+  const phone = from.replace('whatsapp:', '');
+
+  const supabase = createClient();
+
+  // Find customer
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('id, name')
+    .eq('phone', phone)
+    .single();
+
+  if (!customer) return new Response('OK', { status: 200 });
+
+  // Find oldest overdue invoice
+  const { data: overdue } = await supabase
+    .from('invoices')
+    .select('id, amount, due_date')
+    .eq('customer_id', customer.id)
+    .eq('status', 'pending')
+    .order('due_date')
+    .limit(1);
+
+  if (!overdue?.length) {
+    await sendWhatsApp(phone, `Hi ${customer.name}, no overdue invoices. Thank you!`);
+    return new Response('OK', { status: 200 });
+  }
+
+  const inv = overdue[0];
+
+  if (body.includes('pay') || body.includes('pagar') || body === 'yes') {
+    const paymentLink = `https://pay.yourdomain.com/invoice/${inv.id}`;
+    await sendWhatsApp(phone, `Thank you! Pay here:\n${paymentLink}\nAmount: $${inv.amount}`);
+  } else if (body.includes('info') || body.includes('details') || body.includes('cuánto')) {
+    await sendWhatsApp(phone, `Invoice #${inv.id}\nAmount: $${inv.amount}\nDue: ${new Date(inv.due_date).toLocaleDateString()}\nReply PAY for link.`);
+  } else if (body.includes('no') || body.includes('cannot') || body.includes('no puedo')) {
+    await sendWhatsApp(phone, `Understood. A team member will contact you soon.`);
+    await logConversation(customer.id, inv.id, body, 'whatsapp', true);
+  } else {
+    await sendWhatsApp(phone, `Hi ${customer.name}, please reply:\nPAY - payment link\nINFO - invoice details`);
+    await logConversation(customer.id, inv.id, body, 'whatsapp', false);
+  }
+
+  return new Response('OK', { status: 200 });
 }
 
-// Helper: send message back (same Twilio/WhatsApp API)
-async function sendWhatsAppMessage(toPhone: string, message: string) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = 'whatsapp:+14155238886'; // your Twilio WhatsApp sender
+async function sendWhatsApp(to: string, message: string) {
+  const sid = process.env.TWILIO_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const from = 'whatsapp:' + process.env.TWILIO_WHATSAPP_NUMBER;
 
-  await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+  await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: 'POST',
     headers: {
-      'Authorization': 'Basic ' + btoa(`${accountSid}:${authToken}`),
+      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({
-      To: `whatsapp:${toPhone}`,
-      From: fromNumber,
+      To: `whatsapp:${to}`,
+      From: from,
       Body: message,
     }),
+  });
+}
+
+async function logConversation(customerId: string, invoiceId: string, message: string, channel: string, needsHuman: boolean) {
+  const supabase = createClient();
+  await supabase.from('collection_logs').insert({
+    customer_id: customerId,
+    invoice_id: invoiceId,
+    message,
+    channel,
+    needs_human: needsHuman,
   });
 }
