@@ -212,3 +212,7 @@ create policy "Admins/managers view all time clock entries"
 -- Indexes for performance
 create index if not exists idx_time_clock_user_id on time_clock_entries(user_id);
 create index if not exists idx_time_clock_timestamp on time_clock_entries(timestamp);
+
+-- Insert a default office/job site (run once)
+insert into job_sites (name, latitude, longitude, radius_meters, address)
+values ('Main Office', 17.5046, -88.1962, 200, 'Belize City HQ');  -- adjust coords
