@@ -3,111 +3,57 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
+import { toast } from 'sonner';
 
 export default function Signup() {
   const router = useRouter();
   const supabase = createClient();
-
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [form, setForm] = useState({ email: '', password: '', name: '', phone: '' });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSignup = async () => {
     setLoading(true);
-    setError(null);
-
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName },
-      },
+    const { data, error } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: { data: { full_name: form.name } },
     });
 
-    if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
-    }
-
-    // Optional: auto-sign-in after signup (Supabase often requires confirmation)
-    if (data.user) {
-      // Create customer record automatically
+    if (error) {
+      toast.error(error.message);
+    } else if (data.user) {
+      // Auto create customer & profile
       await supabase.from('customers').insert({
-        name: fullName,
-        phone,
-        email,
-        address: '', // user can edit later
+        name: form.name,
+        phone: form.phone,
+        email: form.email,
+        address: '',
         balance: 0,
         credit_approved: false,
       });
 
-      // Set role to 'customer' by default
       await supabase.from('profiles').upsert({
         id: data.user.id,
-        email,
+        email: form.email,
         role: 'customer',
       });
 
+      toast.success('Account created! Check email if confirmation needed.');
       router.push('/dashboard');
-    } else {
-      setError('Signup successful – check email to confirm, then login.');
     }
     setLoading(false);
   };
 
   return (
-    <div className="max-w-md mx-auto mt-16 p-8 bg-white rounded-xl shadow-md">
-      <h1 className="text-3xl font-bold mb-6 text-center">Sign Up</h1>
-      {error && <p className="text-red-600 mb-4 text-center">{error}</p>}
-      <form onSubmit={handleSignup} className="space-y-4">
-        <input
-          type="text"
-          placeholder="Full Name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          className="w-full border p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
-        <input
-          type="tel"
-          placeholder="Phone Number"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          className="w-full border p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full border p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full border p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700 disabled:opacity-50 transition"
-        >
-          {loading ? 'Creating account...' : 'Sign Up'}
-        </button>
-      </form>
-      <p className="mt-6 text-center text-gray-600">
-        Already have an account? <a href="/login" className="text-blue-600 hover:underline">Login</a>
-      </p>
+    <div className="max-w-md mx-auto p-8 mt-20 bg-white rounded shadow">
+      <h1 className="text-3xl mb-6">Sign Up</h1>
+      <input placeholder="Name" onChange={e => setForm({...form, name: e.target.value})} className="border p-3 w-full mb-4" />
+      <input placeholder="Phone" onChange={e => setForm({...form, phone: e.target.value})} className="border p-3 w-full mb-4" />
+      <input placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} className="border p-3 w-full mb-4" />
+      <input type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} className="border p-3 w-full mb-4" />
+      <button onClick={handleSignup} disabled={loading} className="bg-blue-600 text-white w-full py-3 rounded">
+        {loading ? 'Creating...' : 'Sign Up'}
+      </button>
     </div>
   );
 }
