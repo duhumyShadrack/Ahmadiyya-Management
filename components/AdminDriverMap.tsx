@@ -18,12 +18,11 @@ export default function AdminDriverMap({ locations }: Props) {
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: 'https://api.maptiler.com/maps/streets/style.json?key=YOUR_MAPTILER_KEY', // get free key from maptiler.com
-      center: [-88.2, 17.5], // Belize City default
+      style: 'https://api.maptiler.com/maps/streets/style.json?key=YOUR_MAPTILER_KEY', // sign up free at maptiler.com
+      center: [-88.2, 17.5], // Belize City fallback
       zoom: 11,
     });
 
-    // Cleanup old markers
     markers.current.forEach(m => m.remove());
     markers.current = [];
 
@@ -43,10 +42,8 @@ export default function AdminDriverMap({ locations }: Props) {
       }
     });
 
-    return () => {
-      map.current?.remove();
-    };
+    return () => map.current?.remove();
   }, [locations]);
 
-  return <div ref={mapContainer} className="w-full h-96 rounded-lg shadow-lg border border-gray-200" />;
+  return <div ref={mapContainer} className="w-full h-96 rounded-xl shadow-lg border border-gray-200" />;
 }
