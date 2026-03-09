@@ -353,3 +353,15 @@ create policy "Others view services"
   needs_human boolean default false,
   created_at timestamptz default now()
 );
+
+  SELECT
+  TO_CHAR(due_date, 'YYYY-MM') AS month,
+  COUNT(*) AS total_invoices,
+  COUNT(CASE WHEN status = 'paid' THEN 1 END) AS paid_invoices,
+  ROUND((COUNT(CASE WHEN status = 'paid' THEN 1 END)::numeric / COUNT(*) * 100), 2) AS success_rate,
+  SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS recovered_amount
+FROM invoices
+WHERE due_date >= CURRENT_DATE - INTERVAL '12 months'
+GROUP BY month
+ORDER BY month DESC;
+  
