@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import OrdersTable from '@/components/OrdersTable';
 import CustomerList from '@/components/CustomerList';
+import DriverLocationTracker from '@/components/DriverLocationTracker'; // ← new import
 
 export default function Dashboard() {
   const supabase = createClient();
@@ -25,14 +26,14 @@ export default function Dashboard() {
   useEffect(() => {
     let isMounted = true;
 
-    const initializeDashboard = async () => {
+    const initialize = async () => {
       try {
-        // ── Authenticated user ────────────────────────────────────────
+        // Get user
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser || !isMounted) return;
         setUser(authUser);
 
-        // ── Profile & role determination ──────────────────────────────
+        // Profile & role
         const { data: prof } = await supabase
           .from('profiles')
           .select('role')
@@ -45,16 +46,16 @@ export default function Dashboard() {
           setIsDriver(prof.role === 'driver');
         }
 
-        // ── Customer ID for filtering (non-admin / non-driver users) ──
+        // Customer ID for filtering
         const { data: cust } = await supabase
           .from('customers')
           .select('id')
           .eq('email', authUser.email ?? '')
           .maybeSingle();
 
-        if (cust?.id && isMounted) setCustomerId(cust.id);
+        if (cust?.id) setCustomerId(cust.id);
 
-        // ── Initial orders fetch (role-filtered) ──────────────────────
+        // Initial orders (role-filtered)
         let ordQuery = supabase
           .from('orders')
           .select(`
@@ -65,17 +66,17 @@ export default function Dashboard() {
           .order('created_at', { ascending: false });
 
         if (isAdmin) {
-          // admins see everything
+          // all orders
         } else if (isDriver) {
           ordQuery = ordQuery.eq('driver_id', authUser.id);
         } else if (cust?.id) {
           ordQuery = ordQuery.eq('customer_id', cust.id);
         }
 
-        const { data: initialOrders } = await ordQuery;
-        if (isMounted) setOrders(initialOrders || []);
+        const { data: ords } = await ordQuery;
+        if (isMounted) setOrders(ords || []);
 
-        // ── Admins: full customer list ────────────────────────────────
+        // Admins: customers
         if (isAdmin) {
           const { data: custs } = await supabase
             .from('customers')
@@ -84,7 +85,7 @@ export default function Dashboard() {
           if (isMounted) setCustomers(custs || []);
         }
 
-        // ── Drivers list (for assignment dropdown – admins need it) ───
+        // Drivers list (for assignment dropdown)
         const { data: drvs } = await supabase
           .from('profiles')
           .select('id, email')
@@ -93,18 +94,16 @@ export default function Dashboard() {
         if (isMounted) setDrivers(drvs || []);
 
       } catch (err: any) {
-        setErrorMsg(err.message || 'Failed to initialize dashboard');
-        toast.error('Dashboard initialization error');
+        setErrorMsg(err.message || 'Failed to load dashboard');
+        toast.error('Dashboard load error');
       } finally {
         if (isMounted) setLoading(false);
       }
     };
 
-    initializeDashboard();
+    initialize();
 
-    // ────────────────────────────────────────────────────────────────
-    // Realtime: Orders changes – with role-aware client filtering
-    // ────────────────────────────────────────────────────────────────
+    // Realtime: Orders changes (with role-aware filtering)
     const ordersChannel = supabase
       .channel('orders-changes-global')
       .on(
@@ -117,14 +116,12 @@ export default function Dashboard() {
             let updated = [...prev];
 
             if (payload.eventType === 'INSERT') {
-              // Only add if relevant to current user/role
               if (isDriver && payload.new.driver_id !== user.id) return prev;
               if (!isAdmin && !isDriver && payload.new.customer_id !== customerId) return prev;
               updated.unshift(payload.new);
             } else if (payload.eventType === 'UPDATE') {
               const idx = updated.findIndex((o) => o.id === payload.new.id);
               if (idx !== -1) {
-                // Remove if no longer relevant (e.g. reassigned away from this driver)
                 if (isDriver && payload.new.driver_id !== user.id) {
                   updated.splice(idx, 1);
                 } else {
@@ -135,7 +132,6 @@ export default function Dashboard() {
               updated = updated.filter((o) => o.id !== payload.old.id);
             }
 
-            // Keep newest-first sorting
             return updated.sort(
               (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
             );
@@ -144,13 +140,11 @@ export default function Dashboard() {
       )
       .subscribe();
 
-    // ────────────────────────────────────────────────────────────────
-    // Realtime: Driver-specific notifications (only for drivers)
-    // ────────────────────────────────────────────────────────────────
-    let driverNotifChannel: any = null;
+    // Realtime: Driver-specific notifications
+    let driverChannel: any = null;
 
     if (isDriver && user?.id) {
-      driverNotifChannel = supabase
+      driverChannel = supabase
         .channel(`driver-notifs-${user.id}`)
         .on(
           'postgres_changes',
@@ -181,13 +175,10 @@ export default function Dashboard() {
     return () => {
       isMounted = false;
       supabase.removeChannel(ordersChannel);
-      if (driverNotifChannel) supabase.removeChannel(driverNotifChannel);
+      if (driverChannel) supabase.removeChannel(driverChannel);
     };
   }, [supabase, router, isAdmin, isDriver, user?.id, customerId]);
 
-  // ────────────────────────────────────────────────────────────────
-  // Render
-  // ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -244,12 +235,26 @@ export default function Dashboard() {
               : 'You haven’t placed any orders yet.'}
           </div>
         ) : (
-          <OrdersTable orders={orders} drivers={drivers} isAdmin={isAdmin} />
+          <OrdersTable
+            orders={orders}
+            drivers={drivers}
+            isAdmin={isAdmin}
+            isDriver={isDriver}
+            currentUserId={user?.id || ''}
+          />
         )}
       </section>
 
+      {/* Driver Live Location Section – only shown to drivers */}
+      {isDriver && (
+        <section className="mt-10">
+          <h2 className="text-2xl font-semibold mb-4">Your Live Location</h2>
+          <DriverLocationTracker />
+        </section>
+      )}
+
       {isAdmin && (
-        <section>
+        <section className="mt-12">
           <h2 className="text-2xl font-semibold mb-4">Customers & Credit Management</h2>
           {customers.length === 0 ? (
             <div className="bg-gray-100 border border-gray-200 rounded-xl p-12 text-center text-gray-600 shadow-inner">
