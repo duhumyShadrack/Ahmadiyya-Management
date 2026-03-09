@@ -305,3 +305,22 @@ create table service_types (
 -- Job sites / geofences remain generic (already good)
 -- Time clock entries already generic (user_id + location + timestamp)
 -- Fleet vehicles already generic
+
+  create table service_types (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null unique,
+  description text,
+  default_price numeric,
+  created_at timestamptz default now()
+);
+
+-- RLS: admins manage, others view
+alter table service_types enable row level security;
+
+create policy "Admin manage services"
+  on service_types for all
+  using ((select role from profiles where id = auth.uid()) = 'admin');
+
+create policy "Others view services"
+  on service_types for select
+  using (true);
