@@ -126,3 +126,45 @@ create policy "Drivers update own location"
 create policy "View locations"
   on driver_locations for select
   using (true);
+
+-- Time clock entries (punch in/out history with location proof)
+create table time_clock_entries (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid references auth.users(id) not null,
+  type text not null check (type in ('in', 'out')), -- punch in or out
+  timestamp timestamptz default now() not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  accuracy numeric, -- meters, from geolocation.coords.accuracy
+  job_site_id uuid references job_sites(id), -- optional: link to specific job
+  notes text,
+  created_at timestamptz default now()
+);
+
+-- Optional: Job sites / geofences (for verification)
+create table job_sites (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  radius_meters numeric default 100, -- allowed distance in meters
+  address text
+);
+
+-- RLS for time_clock_entries
+alter table time_clock_entries enable row level security;
+
+-- Drivers see their own punches
+create policy "Drivers view own punches"
+  on time_clock_entries for select
+  using (auth.uid() = user_id);
+
+-- Drivers insert their own
+create policy "Drivers punch in/out"
+  on time_clock_entries for insert
+  with check (auth.uid() = user_id);
+
+-- Admins see all
+create policy "Admins view all punches"
+  on time_clock_entries for select
+  using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
