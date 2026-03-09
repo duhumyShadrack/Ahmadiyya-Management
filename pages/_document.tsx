@@ -15,5 +15,11 @@ export default function Document() {
         <NextScript />
       </body>
     </Html>
+    <Head>
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512x512.png" />
+</Head>
+
   );
 }
