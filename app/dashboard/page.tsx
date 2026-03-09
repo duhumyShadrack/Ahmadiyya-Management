@@ -1,96 +1,127 @@
-'use client'; // Required for realtime subscriptions
-
-import { useEffect, useState } from 'react';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/supabase/server';
+import { redirect } from 'next/navigation';
 import OrdersTable from '@/components/OrdersTable';
 import CustomerList from '@/components/CustomerList';
-import { toast } from 'sonner';
 
-export default function Dashboard() {
+export const dynamic = 'force-dynamic';
+
+export default async function Dashboard() {
   const supabase = createClient();
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
-    const fetchUserAndData = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) window.location.href = '/login';
-      setUser(user);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
 
-      const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setProfile(prof);
-      const admin = prof?.role === 'admin';
-      setIsAdmin(admin);
+  // Get user role
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
 
-      // Fetch initial orders
-      let query = supabase.from('orders').select(`
-        id, status, amount, description, created_at, pickup_address, delivery_address,
-        customer:customers(id, name, phone, address, balance, credit_approved)
-      `).order('created_at', { ascending: false });
+  const isAdmin = profile?.role === 'admin' || profile?.role === 'manager';
 
-      const { data: cust } = await supabase.from('customers').select('id').eq('email', user.email).maybeSingle();
-      if (!admin && cust?.id) query = query.eq('customer_id', cust.id);
+  // Get linked customer record (for non-admin filtering)
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('id')
+    .eq('email', user.email ?? '')
+    .maybeSingle();
 
-      const { data: ords } = await query;
-      setOrders(ords || []);
+  // Fetch orders
+  let ordersQuery = supabase
+    .from('orders')
+    .select(`
+      id,
+      status,
+      amount,
+      description,
+      created_at,
+      pickup_address,
+      delivery_address,
+      customer:customers (
+        id,
+        name,
+        phone,
+        address,
+        balance,
+        credit_approved
+      )
+    `)
+    .order('created_at', { ascending: false });
 
-      // Admins get customers
-      if (admin) {
-        const { data: custs } = await supabase.from('customers').select('*').order('name');
-        setCustomers(custs || []);
-      }
+  if (!isAdmin && customer?.id) {
+    ordersQuery = ordersQuery.eq('customer_id', customer.id);
+  }
 
-      setLoading(false);
-    };
+  const { data: orders = [] } = await ordersQuery;
 
-    fetchUserAndData();
+  // Fetch customers (admins only)
+  let customers = [];
+  if (isAdmin) {
+    const { data } = await supabase
+      .from('customers')
+      .select('id, name, phone, address, balance, credit_approved')
+      .order('name');
+    customers = data ?? [];
+  }
 
-    // Realtime subscription
-    const channel = supabase.channel('orders-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-        console.log('Change received!', payload);
-        toast.info(`Order update: ${payload.eventType} - ${payload.new?.status || 'unknown'}`);
-
-        setOrders((prev) => {
-          if (payload.eventType === 'INSERT') return [payload.new, ...prev];
-          if (payload.eventType === 'UPDATE') return prev.map(o => o.id === payload.new.id ? payload.new : o);
-          if (payload.eventType === 'DELETE') return prev.filter(o => o.id !== payload.old.id);
-          return prev;
-        });
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  if (loading) return <div className="p-10 text-center">Loading dashboard...</div>;
+  // Fetch drivers (only needed if admin, but fetch anyway – can optimize later)
+  const { data: drvs = [] } = await supabase
+    .from('profiles')
+    .select('id, email')
+    .eq('role', 'driver')
+    .order('email');
 
   return (
-    <div className="container mx-auto p-6">
-      <h1 className="text-4xl font-bold mb-8">{isAdmin ? 'Admin Control Center' : 'Your Dashboard'}</h1>
+    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <h1 className="text-3xl font-bold text-gray-900">
+            {isAdmin ? 'Admin Dashboard' : 'Your Dashboard'}
+          </h1>
+          <a
+            href="/orders/new"
+            className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md font-medium shadow-sm transition-colors"
+          >
+            + New Order
+          </a>
+        </div>
 
-      <section className="mb-12">
-        <h2 className="text-2xl mb-4">{isAdmin ? 'Live Orders' : 'Your Live Orders'}</h2>
-        <OrdersTable orders={orders} />
-      </section>
+        {/* Orders Section */}
+        <div className="bg-white shadow rounded-lg overflow-hidden mb-10">
+          <div className="px-6 py-5 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">
+              {isAdmin ? 'All Orders' : 'Your Orders'}
+            </h2>
+          </div>
+          {orders.length === 0 ? (
+            <div className="p-12 text-center text-gray-500">
+              {isAdmin ? 'No orders yet.' : 'You have no orders yet.'}
+            </div>
+          ) : (
+            <OrdersTable 
+              orders={orders} 
+              drivers={drvs} 
+              isAdmin={isAdmin} 
+            />
+          )}
+        </div>
 
-      {isAdmin && (
-        <section>
-          <h2 className="text-2xl mb-4">Customers Management</h2>
-          <CustomerList customers={customers} isAdmin={true} />
-        </section>
-      )}
-
-      <div className="mt-8">
-        <a href="/orders/new" className="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700">
-          Place New Order
-        </a>
+        {/* Customers – admin only */}
+        {isAdmin && (
+          <div className="bg-white shadow rounded-lg overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Customers</h2>
+            </div>
+            {customers.length === 0 ? (
+              <div className="p-12 text-center text-gray-500">
+                No customers registered yet.
+              </div>
+            ) : (
+              <CustomerList customers={customers} isAdmin={true} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
