@@ -1,5 +1,5 @@
 // app/api/whatsapp/webhook/route.ts
-// app/api/whatsapp/webhook/route.ts
+
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
 
