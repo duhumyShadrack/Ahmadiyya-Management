@@ -4,25 +4,25 @@ import './globals.css';
 import { Toaster } from 'sonner';
 import { createClient } from '@/utils/supabase/server';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'hAhmadiyya Management',
-  description: 'Operations dashboard for orders, customers, drivers, time clock, and team management',
-  keywords: 'handyman, management, ahmadiyya, belize, delivery, time clock, location tracking',
-  authors: [{ name: 'ahmadiyya_management', url: 'https://versatilehandy.com' }],
+  title: 'H Dee Handyman Services Inc - Ahmadiyya Management',
+  description: 'Operations dashboard for orders, customers, drivers, time clock, location tracking, fleet maintenance, and team management in Belize',
+  keywords: 'handyman services, ahmadiyya management, belize operations, delivery tracking, time clock, fleet maintenance, driver location',
+  authors: [{ name: 'H Dee Handyman Services Inc' }],
   openGraph: {
     title: 'H Dee Handyman Services Inc',
-    description: 'Professional management dashboard for operations in Belize',
-    url: 'https://yourdomain.com',
+    description: 'Professional management dashboard for home services and operations',
+    url: 'https://versatilehandy.com', // replace with your actual domain
     siteName: 'Ahmadiyya Management',
     images: [
       {
-        url: '/og-image.jpg', // add this image to public/
+        url: '/og-image.jpg', // add this image to /public/
         width: 1200,
         height: 630,
-        alt: 'H Dee Handyman Services Dashboard',
       },
     ],
     locale: 'en_US',
@@ -35,7 +35,6 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: '/favicon.ico',
-    apple: '/apple-touch-icon.png',
   },
 };
 
@@ -61,12 +60,12 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 min-h-screen flex flex-col`}>
+      <body className={`${inter.className} antialiased bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen flex flex-col`}>
         {/* Header */}
         <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
-              {/* Logo / Brand */}
+              {/* Brand */}
               <Link href="/" className="flex items-center space-x-2">
                 <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                   H Dee
@@ -76,7 +75,7 @@ export default async function RootLayout({
                 </span>
               </Link>
 
-              {/* Navigation / Auth */}
+              {/* Navigation */}
               <nav className="flex items-center space-x-6">
                 {user ? (
                   <>
@@ -87,15 +86,30 @@ export default async function RootLayout({
                       Dashboard
                     </Link>
 
-                    <div className="flex items-center space-x-3">
+                    {/* Notification Bell */}
+                    <div className="relative">
+                      <button
+                        onClick={() => toast('Notifications dropdown coming soon')}
+                        className="p-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 relative transition-colors"
+                      >
+                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        {/* Unread badge - you can fetch real count via API later */}
+                        <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
+                          3
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* User info & logout */}
+                    <div className="flex items-center space-x-4">
                       <span className="text-sm text-gray-600 dark:text-gray-400">
                         {profile?.role ? (
-                          <span className="capitalize font-medium">
+                          <span className="capitalize font-medium px-2 py-1 bg-blue-100 dark:bg-blue-900 rounded">
                             {profile.role}
                           </span>
-                        ) : (
-                          profile?.email
-                        )}
+                        ) : profile?.email}
                       </span>
 
                       <form action="/api/auth/signout" method="post">
@@ -109,12 +123,20 @@ export default async function RootLayout({
                     </div>
                   </>
                 ) : (
-                  <Link
-                    href="/login"
-                    className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
-                  >
-                    Sign In
-                  </Link>
+                  <>
+                    <Link
+                      href="/login"
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                    >
+                      Sign In
+                    </Link>
+                    <Link
+                      href="/signup"
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                    >
+                      Sign Up
+                    </Link>
+                  </>
                 )}
               </nav>
             </div>
@@ -129,7 +151,7 @@ export default async function RootLayout({
         </main>
 
         {/* Footer */}
-        <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6">
+        <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6 mt-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500 dark:text-gray-400">
             © {new Date().getFullYear()} H Dee Handyman Services Inc. All rights reserved.
             <span className="mx-2">•</span>
@@ -144,8 +166,21 @@ export default async function RootLayout({
             duration: 5000,
             style: {
               borderRadius: '10px',
-              background: '#333',
-              color: '#fff',
+              background: '#1f2937',
+              color: '#f3f4f6',
+              border: '1px solid #374151',
+            },
+            success: {
+              iconTheme: {
+                primary: '#10b981',
+                secondary: '#064e3b',
+              },
+            },
+            error: {
+              iconTheme: {
+                primary: '#ef4444',
+                secondary: '#7f1d1d',
+              },
             },
           }}
         />
