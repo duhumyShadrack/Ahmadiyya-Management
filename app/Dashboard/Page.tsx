@@ -246,4 +246,16 @@ export default function Dashboard() {
       )}
     </div>
   );
+  {isAdmin && (
+  <section className="mt-12">
+    <h2 className="text-2xl font-semibold mb-4">Live Driver Locations</h2>
+    {driverLocations.length === 0 ? (
+      <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+        No drivers sharing location yet.
+      </div>
+    ) : (
+      <AdminDriverMap locations={driverLocations} />
+    )}
+  </section>
+)}
 }
