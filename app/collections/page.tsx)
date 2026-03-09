@@ -1,6 +1,82 @@
 // Add to imports
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+// CSV Export
+const exportCSV = () => {
+  if (overdueInvoices.length === 0) return toast.warning('No data to export');
+
+  const headers = [
+    'Customer',
+    'Invoice ID',
+    'Amount',
+    'Due Date',
+    'Days Overdue',
+    'Last Reminder',
+  ];
+
+  const rows = overdueInvoices.map(inv => {
+    const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+    return [
+      inv.customer?.name || 'Unknown',
+      inv.id.slice(0, 8),
+      `$${inv.amount.toFixed(2)}`,
+      new Date(inv.due_date).toLocaleDateString(),
+      `${daysOverdue} days`,
+      inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
+    ];
+  });
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.join(','))
+    .join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `overdue_invoices_${new Date().toISOString().split('T')[0]}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+
+  toast.success('CSV exported');
+};
+
+// PDF Export
+const exportPDF = () => {
+  if (overdueInvoices.length === 0) return toast.warning('No data to export');
+
+  const doc = new jsPDF();
+
+  doc.setFontSize(18);
+  doc.text('Overdue Invoices Report', 14, 22);
+
+  doc.setFontSize(11);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+
+  const tableData = overdueInvoices.map(inv => {
+    const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+    return [
+      inv.customer?.name || 'Unknown',
+      inv.id.slice(0, 8),
+      `$${inv.amount.toFixed(2)}`,
+      new Date(inv.due_date).toLocaleDateString(),
+      `${daysOverdue} days`,
+      inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
+    ];
+  });
+
+  (doc as any).autoTable({
+    head: [['Customer', 'Invoice ID', 'Amount', 'Due Date', 'Days Overdue', 'Last Reminder']],
+    body: tableData,
+    startY: 40,
+    theme: 'grid',
+    headStyles: { fillColor: [59, 130, 246] },
+    styles: { fontSize: 10, cellPadding: 3 },
+  });
+
+  doc.save(`overdue_invoices_${new Date().toISOString().split('T')[0]}.pdf`);
+  toast.success('PDF exported');
+};
 // ... inside component
 
 const monthlySuccess = [
