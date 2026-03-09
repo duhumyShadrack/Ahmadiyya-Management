@@ -17,7 +17,7 @@ export default function DriverLocationTracker() {
       setError(null);
 
       if (!navigator.geolocation) {
-        setError('Geolocation not supported');
+        setError('Geolocation is not supported by your browser');
         setStatus('denied');
         return;
       }
@@ -33,22 +33,26 @@ export default function DriverLocationTracker() {
               body: JSON.stringify({ latitude, longitude }),
             });
 
-            if (!res.ok) throw new Error('Update failed');
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.error || 'Failed to send location');
+            }
 
             setStatus('active');
           } catch (err: any) {
             setError(err.message);
             toast.error('Location update failed');
+            setStatus('denied');
           }
         },
         (err) => {
           setError(err.message);
           setStatus('denied');
-          toast.error(`Location permission: ${err.message}`);
+          toast.error(`Location permission denied: ${err.message}`);
         },
         {
           enableHighAccuracy: true,
-          timeout: 5000,
+          timeout: 10000,
           maximumAge: 0,
         }
       );
@@ -62,38 +66,59 @@ export default function DriverLocationTracker() {
       setStatus('off');
     };
 
-    // Auto-start if driver wants (or add toggle button)
-    // startTracking(); // Uncomment for auto-start
+    // Auto-start tracking when component mounts (driver dashboard)
+    startTracking();
 
     return () => stopTracking();
   }, []);
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-      <h3 className="text-lg font-semibold mb-3">Driver Location Sharing</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold">Live Location Sharing</h3>
+        <span
+          className={`px-3 py-1 rounded-full text-xs font-medium ${
+            status === 'active'
+              ? 'bg-green-100 text-green-800'
+              : status === 'denied'
+              ? 'bg-red-100 text-red-800'
+              : 'bg-gray-100 text-gray-800'
+          }`}
+        >
+          {status === 'active'
+            ? 'Active'
+            : status === 'requesting'
+            ? 'Requesting...'
+            : status === 'denied'
+            ? 'Denied'
+            : 'Off'}
+        </span>
+      </div>
 
       {status === 'off' && (
         <button
           onClick={() => {
-            // Toggle start
-            navigator.geolocation.getCurrentPosition(() => {}, () => {}, {}); // Trigger permission
-            // start logic is in useEffect
+            // Trigger permission request
+            navigator.geolocation.getCurrentPosition(() => {}, () => {}, {});
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md font-medium"
         >
-          Start Sharing Location
+          Enable Location Sharing
         </button>
       )}
 
-      {status === 'requesting' && <p className="text-blue-600">Requesting permission...</p>}
-      {status === 'active' && <p className="text-green-600 font-medium">Sharing live location (updated every few seconds)</p>}
-      {status === 'denied' && (
-        <p className="text-red-600">
-          Location access denied. {error && `(${error})`}
-          <br />
+      {status === 'active' && (
+        <p className="text-green-700 text-sm">
+          Your location is being shared in real-time. Admins can see your position on the map.
+        </p>
+      )}
+
+      {error && (
+        <p className="mt-4 text-red-600 text-sm">
+          {error}
           <button
             onClick={() => window.location.reload()}
-            className="mt-2 text-blue-600 underline"
+            className="ml-3 text-blue-600 underline"
           >
             Retry
           </button>
