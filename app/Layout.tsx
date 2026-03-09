@@ -9,8 +9,8 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Ahmadiyya Management – Multi-Service Operations Platform',
-  description: 'Complete dashboard for managing jobs, customers, team, time tracking, location, fleet maintenance and more. Scalable for delivery, cleaning, repair, and other services.',
-  keywords: 'operations dashboard, job management, time clock, driver tracking, fleet maintenance, multi-service platform',
+  description: 'Complete dashboard for managing jobs, customers, team, time tracking, location, fleet maintenance, invoices, and more. Scalable for any service business.',
+  keywords: 'operations dashboard, job management, time clock, driver tracking, fleet maintenance, invoice follow-up, multi-service platform',
   openGraph: {
     title: 'Ahmadiyya Management',
     description: 'Business operations platform for service-based companies',
@@ -73,17 +73,15 @@ export default async function RootLayout({
 
                     {/* Notification Bell */}
                     <div className="relative">
-                      <button
-                        className="p-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 relative transition-colors"
-                      >
+                      <Link href="/notifications" className="p-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 relative transition-colors block">
                         <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                         </svg>
-                        {/* Placeholder unread count - replace with real data later */}
+                        {/* Unread count placeholder – make dynamic later */}
                         <span className="absolute -top-1 -right-1 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
-                          2
+                          4
                         </span>
-                      </button>
+                      </Link>
                     </div>
 
                     {/* User info & logout */}
@@ -99,64 +97,4 @@ export default async function RootLayout({
                       <form action="/api/auth/signout" method="post">
                         <button
                           type="submit"
-                          className="text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                        >
-                          Sign Out
-                        </button>
-                      </form>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex items-center space-x-4">
-                    <Link
-                      href="/login"
-                      className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
-                    >
-                      Sign In
-                    </Link>
-                    <Link
-                      href="/signup"
-                      className="text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors"
-                    >
-                      Sign Up
-                    </Link>
-                  </div>
-                )}
-              </nav>
-            </div>
-          </div>
-        </header>
-
-        {/* Main Content */}
-        <main className="flex-1">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            {children}
-          </div>
-        </main>
-
-        {/* Footer */}
-        <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6 mt-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500 dark:text-gray-400">
-            © {new Date().getFullYear()} Ahmadiyya Management Platform. All rights reserved.
-            <span className="mx-2">•</span>
-            Built for service businesses worldwide
-          </div>
-        </footer>
-
-        {/* Global Toaster */}
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            duration: 5000,
-            style: {
-              borderRadius: '10px',
-              background: '#1f2937',
-              color: '#f3f4f6',
-              border: '1px solid #374151',
-            },
-          }}
-        />
-      </body>
-    </html>
-  );
-}
+                          className="text-sm font-medium text-red-600 hover:text-red-700 dark
