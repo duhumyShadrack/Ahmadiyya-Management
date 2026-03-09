@@ -116,3 +116,50 @@ const { error } = await supabase.from('time_clock_entries').insert({
 if (error) return NextResponse.json({ error: 'Failed to record punch' }, { status: 500 });
 
 return NextResponse.json({ success: true, message: `Clocked ${type.toUpperCase()} at ${site.name}` });
+
+function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+// Add state
+const [jobSites, setJobSites] = useState<any[]>([]);
+const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+
+// Fetch sites on mount
+useEffect(() => {
+  async function fetchSites() {
+    const { data } = await fetch('/api/job-sites').then(r => r.json());
+    setJobSites(data || []);
+    if (data?.length > 0) setSelectedSiteId(data[0].id);
+  }
+  fetchSites();
+}, []);
+
+// In handlePunch body:
+body: JSON.stringify({ type, latitude, longitude, accuracy, job_site_id: selectedSiteId }),
