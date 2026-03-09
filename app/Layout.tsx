@@ -2,15 +2,40 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { Toaster } from 'sonner';
-import { createClient } from '@/utils/supabase/server'; // optional – for server-side auth checks if needed
+import { createClient } from '@/utils/supabase/server';
+import Link from 'next/link';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Ahmadiyya Management – H Dee Handyman Services Inc',
-  description: 'Management dashboard for orders, customers, drivers, and community operations',
+  title: 'hAhmadiyya Management',
+  description: 'Operations dashboard for orders, customers, drivers, time clock, and team management',
+  keywords: 'handyman, management, ahmadiyya, belize, delivery, time clock, location tracking',
+  authors: [{ name: 'ahmadiyya_management', url: 'https://versatilehandy.com' }],
+  openGraph: {
+    title: 'H Dee Handyman Services Inc',
+    description: 'Professional management dashboard for operations in Belize',
+    url: 'https://yourdomain.com',
+    siteName: 'Ahmadiyya Management',
+    images: [
+      {
+        url: '/og-image.jpg', // add this image to public/
+        width: 1200,
+        height: 630,
+        alt: 'H Dee Handyman Services Dashboard',
+      },
+    ],
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'H Dee Handyman Services Inc',
+    description: 'Operations & team management dashboard',
+  },
   icons: {
     icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
   },
 };
 
@@ -19,71 +44,112 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Optional: server-side session check (can be used for global auth state if needed)
-  // const supabase = createClient();
-  // const { data: { session } } = await supabase.auth.getSession();
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let profile = null;
+  if (user) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role, email')
+      .eq('id', user.id)
+      .single();
+    profile = data;
+  }
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased bg-gray-50 min-h-screen`}>
-        {/* Global Toaster for notifications */}
-        <Toaster 
+      <body className={`${inter.className} antialiased bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 min-h-screen flex flex-col`}>
+        {/* Header */}
+        <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50 shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-16">
+              {/* Logo / Brand */}
+              <Link href="/" className="flex items-center space-x-2">
+                <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                  H Dee
+                </span>
+                <span className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                  Management
+                </span>
+              </Link>
+
+              {/* Navigation / Auth */}
+              <nav className="flex items-center space-x-6">
+                {user ? (
+                  <>
+                    <Link
+                      href="/dashboard"
+                      className="text-sm font-medium text-gray-700 hover:text-blue-600 dark:text-gray-300 dark:hover:text-blue-400 transition-colors"
+                    >
+                      Dashboard
+                    </Link>
+
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        {profile?.role ? (
+                          <span className="capitalize font-medium">
+                            {profile.role}
+                          </span>
+                        ) : (
+                          profile?.email
+                        )}
+                      </span>
+
+                      <form action="/api/auth/signout" method="post">
+                        <button
+                          type="submit"
+                          className="text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                        >
+                          Sign Out
+                        </button>
+                      </form>
+                    </div>
+                  </>
+                ) : (
+                  <Link
+                    href="/login"
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                  >
+                    Sign In
+                  </Link>
+                )}
+              </nav>
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {children}
+          </div>
+        </main>
+
+        {/* Footer */}
+        <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            © {new Date().getFullYear()} H Dee Handyman Services Inc. All rights reserved.
+            <span className="mx-2">•</span>
+            Belize City, Belize
+          </div>
+        </footer>
+
+        {/* Global Toaster */}
+        <Toaster
           position="top-right"
           toastOptions={{
-            duration: 4000,
+            duration: 5000,
             style: {
-              borderRadius: '8px',
+              borderRadius: '10px',
               background: '#333',
               color: '#fff',
             },
           }}
         />
-
-        {/* Optional global header / nav – can be conditional based on auth later */}
-        <header className="bg-white border-b shadow-sm sticky top-0 z-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
-              <div className="flex items-center">
-                <h1 className="text-xl font-bold text-blue-700">
-                  Ahmadiyya Management
-                </h1>
-                <span className="ml-2 text-sm text-gray-500">
-                  H Dee Handyman Services Inc
-                </span>
-              </div>
-
-              {/* Placeholder for auth/user menu */}
-              <div className="flex items-center space-x-4">
-                {/* You can add conditional Login/Logout/Profile links here */}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Main content */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {children}
-        </main>
-
-        {/* Optional footer */}
-        <footer className="bg-white border-t mt-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-sm text-gray-500">
-            © {new Date().getFullYear()} H Dee Handyman Services Inc. All rights reserved.
-          </div>
-        </footer>
       </body>
     </html>
   );
-  // In layout.tsx header
-<div className="relative">
-  <button className="p-2 text-gray-600 hover:text-gray-900">
-    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-    </svg>
-    {/* Badge */}
-    <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
-      3
-    </span>
-  </button>
-</div>
 }
