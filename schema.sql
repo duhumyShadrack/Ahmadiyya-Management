@@ -343,4 +343,13 @@ create policy "Others view services"
   add column escalated_to_human boolean default false,
   add column whatsapp_thread_id text,   -- for WhatsApp conversation tracking
   add column last_communication_at timestamptz; 
-  
+
+  create table collection_logs (
+  id uuid primary key default uuid_generate_v4(),
+  customer_id uuid references customers(id),
+  invoice_id uuid references invoices(id),
+  message text,
+  channel text,
+  needs_human boolean default false,
+  created_at timestamptz default now()
+);
