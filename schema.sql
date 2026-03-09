@@ -324,3 +324,14 @@ create policy "Admin manage services"
 create policy "Others view services"
   on service_types for select
   using (true);
+
+  create table invoices (
+  id uuid primary key default uuid_generate_v4(),
+  job_id uuid references jobs(id) not null,
+  customer_id uuid references customers(id) not null,
+  amount numeric not null,
+  status text default 'pending' check (status in ('pending', 'paid', 'overdue', 'cancelled')),
+  due_date timestamptz not null,
+  created_at timestamptz default now(),
+  pdf_url text -- link to generated PDF in storage
+);
