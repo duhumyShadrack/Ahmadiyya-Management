@@ -1,111 +1,385 @@
-// Add to imports
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { createClient } from '@/utils/supabase/client';
+import { toast } from 'sonner';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  LineChart,
+  Line,
+  CartesianGrid,
+} from 'recharts';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
-// CSV Export
-const exportCSV = () => {
-  if (overdueInvoices.length === 0) return toast.warning('No data to export');
-
-  const headers = [
-    'Customer',
-    'Invoice ID',
-    'Amount',
-    'Due Date',
-    'Days Overdue',
-    'Last Reminder',
-  ];
-
-  const rows = overdueInvoices.map(inv => {
-    const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
-    return [
-      inv.customer?.name || 'Unknown',
-      inv.id.slice(0, 8),
-      `$${inv.amount.toFixed(2)}`,
-      new Date(inv.due_date).toLocaleDateString(),
-      `${daysOverdue} days`,
-      inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
-    ];
+export default function CollectionsDashboard() {
+  const supabase = createClient();
+  const [overdueInvoices, setOverdueInvoices] = useState<any[]>([]);
+  const [collectionLogs, setCollectionLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalOverdue: 0,
+    totalAmount: 0,
+    paidAfterReminder: 0,
+    avgDaysToPay: 0,
+    successRate: 0,
   });
+  const [monthlyTrends, setMonthlyTrends] = useState<any[]>([]);
 
-  const csvContent = [headers, ...rows]
-    .map(row => row.join(','))
-    .join('\n');
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `overdue_invoices_${new Date().toISOString().split('T')[0]}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
+  async function loadData() {
+    setLoading(true);
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  toast.success('CSV exported');
-};
+      // Overdue invoices
+      const { data: invoices, error: invErr } = await supabase
+        .from('invoices')
+        .select(`
+          id, amount, due_date, status, reminder_count, reminder_level, last_reminder_sent,
+          customer:customers (id, name, phone, email, whatsapp_number)
+        `)
+        .eq('status', 'pending')
+        .lt('due_date', thirtyDaysAgo.toISOString())
+        .order('due_date', { ascending: true });
 
-// PDF Export
-const exportPDF = () => {
-  if (overdueInvoices.length === 0) return toast.warning('No data to export');
+      if (invErr) throw invErr;
+      setOverdueInvoices(invoices || []);
 
-  const doc = new jsPDF();
+      // Collection logs
+      const { data: logs } = await supabase
+        .from('collection_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-  doc.setFontSize(18);
-  doc.text('Overdue Invoices Report', 14, 22);
+      setCollectionLogs(logs || []);
 
-  doc.setFontSize(11);
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+      // Stats
+      const total = invoices?.length || 0;
+      const paid = invoices?.filter(i => i.status === 'paid') || [];
+      const successRate = total > 0 ? Math.round((paid.length / total) * 100) : 0;
 
-  const tableData = overdueInvoices.map(inv => {
-    const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
-    return [
-      inv.customer?.name || 'Unknown',
-      inv.id.slice(0, 8),
-      `$${inv.amount.toFixed(2)}`,
-      new Date(inv.due_date).toLocaleDateString(),
-      `${daysOverdue} days`,
-      inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
-    ];
-  });
+      let sumDays = 0;
+      paid.forEach(inv => {
+        if (inv.first_reminder_sent && inv.paid_at) {
+          const days = (new Date(inv.paid_at) - new Date(inv.first_reminder_sent)) / 86400000;
+          sumDays += days;
+        }
+      });
+      const avgDays = paid.length > 0 ? (sumDays / paid.length).toFixed(1) : '0.0';
 
-  (doc as any).autoTable({
-    head: [['Customer', 'Invoice ID', 'Amount', 'Due Date', 'Days Overdue', 'Last Reminder']],
-    body: tableData,
-    startY: 40,
-    theme: 'grid',
-    headStyles: { fillColor: [59, 130, 246] },
-    styles: { fontSize: 10, cellPadding: 3 },
-  });
+      setStats({
+        totalOverdue: total,
+        totalAmount: invoices?.reduce((sum, i) => sum + i.amount, 0) || 0,
+        paidAfterReminder: paid.length,
+        avgDaysToPay: avgDays,
+        successRate,
+      });
 
-  doc.save(`overdue_invoices_${new Date().toISOString().split('T')[0]}.pdf`);
-  toast.success('PDF exported');
-};
-// ... inside component
+      // Monthly trends (simplified – expand with real grouping)
+      const trends = [
+        { month: 'Jan', success: 60, recovered: 1200 },
+        { month: 'Feb', success: 68, recovered: 1800 },
+        { month: 'Mar', success: 75, recovered: 2100 },
+        { month: 'Apr', success: stats.successRate, recovered: stats.totalAmount },
+      ];
+      setMonthlyTrends(trends);
 
-const monthlySuccess = [
-  { month: 'Jan', success: 65, recovered: 1200 },
-  { month: 'Feb', success: 72, recovered: 1800 },
-  { month: 'Mar', success: 78, recovered: 2100 },
-  // Fetch real data from invoices + logs
-];
+    } catch (err: any) {
+      toast.error('Failed to load collection data');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-return (
-  // ... existing JSX
+  async function sendReminder(invoiceId: string, channel: 'whatsapp' | 'email' | 'voice') {
+    try {
+      const res = await fetch('/api/reminders/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId, channel }),
+      });
 
-  <section className="mt-12">
-    <h2 className="text-2xl font-semibold mb-6">Collection Success Over Time</h2>
-    <div className="bg-white p-6 rounded-xl shadow-md border">
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={monthlySuccess}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="month" />
-          <YAxis yAxisId="left" orientation="left" />
-          <YAxis yAxisId="right" orientation="right" />
-          <Tooltip />
-          <Legend />
-          <Line yAxisId="left" type="monotone" dataKey="success" stroke="#10b981" name="Success Rate (%)" />
-          <Line yAxisId="right" type="monotone" dataKey="recovered" stroke="#3b82f6" name="Amount Recovered ($)" />
-        </LineChart>
-      </ResponsiveContainer>
+      if (!res.ok) throw new Error('Failed to send reminder');
+
+      toast.success(`Reminder sent via ${channel}`);
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Send failed');
+    }
+  }
+
+  async function generatePaymentLink(invoiceId: string) {
+    try {
+      const res = await fetch('/api/payments/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId }),
+      });
+
+      const { link } = await res.json();
+
+      if (!res.ok || !link) throw new Error('Failed to generate link');
+
+      toast.success('Payment link generated!');
+      window.open(link, '_blank');
+    } catch (err: any) {
+      toast.error(err.message || 'Payment link failed');
+    }
+  }
+
+  // CSV Export
+  const exportCSV = () => {
+    if (overdueInvoices.length === 0) return toast.warning('No data to export');
+
+    const headers = ['Customer', 'Invoice ID', 'Amount', 'Due Date', 'Days Overdue', 'Last Reminder'];
+    const rows = overdueInvoices.map(inv => {
+      const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+      return [
+        inv.customer?.name || 'Unknown',
+        inv.id.slice(0, 8),
+        `$${inv.amount.toFixed(2)}`,
+        new Date(inv.due_date).toLocaleDateString(),
+        `${daysOverdue} days`,
+        inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
+      ];
+    });
+
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `overdue_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success('CSV exported');
+  };
+
+  // PDF Export
+  const exportPDF = () => {
+    if (overdueInvoices.length === 0) return toast.warning('No data to export');
+
+    const doc = new jsPDF();
+
+    doc.setFontSize(18);
+    doc.text('Overdue Invoices Report', 14, 22);
+
+    doc.setFontSize(11);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+
+    const tableData = overdueInvoices.map(inv => {
+      const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+      return [
+        inv.customer?.name || 'Unknown',
+        inv.id.slice(0, 8),
+        `$${inv.amount.toFixed(2)}`,
+        new Date(inv.due_date).toLocaleDateString(),
+        `${daysOverdue} days`,
+        inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never',
+      ];
+    });
+
+    (doc as any).autoTable({
+      head: [['Customer', 'Invoice ID', 'Amount', 'Due Date', 'Days Overdue', 'Last Reminder']],
+      body: tableData,
+      startY: 40,
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246] },
+      styles: { fontSize: 10, cellPadding: 3 },
+    });
+
+    doc.save(`overdue_${new Date().toISOString().split('T')[0]}.pdf`);
+    toast.success('PDF exported');
+  };
+
+  if (loading) return <div className="p-8 text-center">Loading collections...</div>;
+
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <h1 className="text-3xl font-bold mb-8">Collections & Overdue Management</h1>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+        <div className="bg-white p-6 rounded-xl shadow-md border">
+          <h3 className="text-lg font-semibold text-gray-700">Total Overdue</h3>
+          <p className="text-3xl font-bold text-red-600">{stats.totalOverdue}</p>
+        </div>
+        <div className="bg-white p-6 rounded-xl shadow-md border">
+          <h3 className="text-lg font-semibold text-gray-700">Amount Overdue</h3>
+          <p className="text-3xl font-bold text-red-600">${stats.totalAmount.toFixed(2)}</p>
+        </div>
+        <div className="bg-white p-6 rounded-xl shadow-md border">
+          <h3 className="text-lg font-semibold text-gray-700">Paid After Reminder</h3>
+          <p className="text-3xl font-bold text-green-600">{stats.paidAfterReminder}</p>
+        </div>
+        <div className="bg-white p-6 rounded-xl shadow-md border">
+          <h3 className="text-lg font-semibold text-gray-700">Success Rate</h3>
+          <p className="text-3xl font-bold text-purple-600">{stats.successRate}%</p>
+          <p className="text-sm text-gray-500">Avg days to pay: {stats.avgDaysToPay}</p>
+        </div>
+      </div>
+
+      {/* Export Buttons */}
+      <div className="flex flex-wrap gap-4 mb-8">
+        <button onClick={exportCSV} className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md">
+          Export CSV
+        </button>
+        <button onClick={exportPDF} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-md">
+          Export PDF
+        </button>
+      </div>
+
+      {/* Overdue List */}
+      {overdueInvoices.length === 0 ? (
+        <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+          No overdue invoices at the moment.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm mb-12">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Customer</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Invoice ID</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Amount</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Due Date</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Days Overdue</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Last Reminder</th>
+                <th className="px-6 py-4 text-left text-sm font-medium text-gray-700">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              {overdueInvoices.map(inv => {
+                const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+                return (
+                  <tr key={inv.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {inv.customer?.name || 'Unknown'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">#{inv.id.slice(0, 8)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">${inv.amount.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(inv.due_date).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-medium">
+                      {daysOverdue} days
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {inv.last_reminder_sent ? new Date(inv.last_reminder_sent).toLocaleDateString() : 'Never'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                      <button
+                        onClick={() => sendReminder(inv.id, 'whatsapp')}
+                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs"
+                      >
+                        WhatsApp
+                      </button>
+                      <button
+                        onClick={() => sendReminder(inv.id, 'email')}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs"
+                      >
+                        Email
+                      </button>
+                      <button
+                        onClick={() => sendReminder(inv.id, 'voice')}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs"
+                      >
+                        Call
+                      </button>
+                      <button
+                        onClick={() => generatePaymentLink(inv.id)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs"
+                      >
+                        Pay Link
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Charts & Reports */}
+      <section className="mt-12">
+        <h2 className="text-2xl font-semibold mb-6">Collection Performance</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Success Rate Pie */}
+          <div className="bg-white p-6 rounded-xl shadow-md border">
+            <h3 className="text-lg font-semibold mb-4">Collection Success Rate</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Success', value: stats.successRate, fill: '#10b981' },
+                    { name: 'Pending/Failed', value: 100 - stats.successRate, fill: '#ef4444' },
+                  ]}
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  <Cell fill="#10b981" />
+                  <Cell fill="#ef4444" />
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Channel Breakdown */}
+          <div className="bg-white p-6 rounded-xl shadow-md border">
+            <h3 className="text-lg font-semibold mb-4">Follow-ups by Channel</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={[
+                { name: 'WhatsApp', count: collectionLogs.filter(l => l.channel === 'whatsapp').length },
+                { name: 'Email', count: collectionLogs.filter(l => l.channel === 'email').length },
+                { name: 'Voice', count: collectionLogs.filter(l => l.channel === 'voice').length },
+              ]}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="count" fill="#8884d8" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Success Over Time */}
+        <div className="mt-12 bg-white p-6 rounded-xl shadow-md border">
+          <h3 className="text-lg font-semibold mb-4">Success Rate Over Time</h3>
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={monthlyTrends}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis yAxisId="left" orientation="left" />
+              <YAxis yAxisId="right" orientation="right" />
+              <Tooltip />
+              <Legend />
+              <Line yAxisId="left" type="monotone" dataKey="success" stroke="#10b981" name="Success Rate (%)" />
+              <Line yAxisId="right" type="monotone" dataKey="recovered" stroke="#3b82f6" name="Amount Recovered ($)" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
     </div>
-  </section>
-);
+  );
+}
