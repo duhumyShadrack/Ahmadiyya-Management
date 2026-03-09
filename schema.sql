@@ -81,3 +81,26 @@ values
 update public.profiles 
 set role = 'admin' 
 where email = 'your-email@here.com';  -- change to your actual email
+
+create table notifications (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid references auth.users(id) on delete cascade,
+  title text not null,
+  body text not null,
+  type text default 'info' check (type in ('info', 'success', 'warning', 'error')),
+  order_id uuid references orders(id) on delete set null,
+  read boolean default false,
+  created_at timestamptz default now()
+);
+
+-- Enable RLS
+alter table notifications enable row level security;
+
+-- Policy: users see only their notifications
+create policy "Users view own notifications"
+  on notifications for select
+  using (auth.uid() = user_id);
+
+create policy "Users mark as read"
+  on notifications for update
+  using (auth.uid() = user_id);
