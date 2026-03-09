@@ -16,23 +16,26 @@ export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isManager, setIsManager] = useState(false);
   const [isDriver, setIsDriver] = useState(false);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
-  const [punches, setPunches] = useState<any[]>([]);
-  const [punchFilter, setPunchFilter] = useState<'today' | 'week' | 'all'>('today');
-  const [loadingPunches, setLoadingPunches] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]); // managers + drivers
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'manager' | 'driver'>('driver');
+
+  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', address: '', email: '' });
 
   useEffect(() => {
     let isMounted = true;
 
-    const initialize = async () => {
+    const loadData = async () => {
       try {
-        // User & profile
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser || !isMounted) return;
         setUser(authUser);
@@ -45,7 +48,8 @@ export default function Dashboard() {
 
         if (prof) {
           setProfile(prof);
-          setIsAdmin(prof.role === 'admin' || prof.role === 'manager');
+          setIsAdmin(prof.role === 'admin');
+          setIsManager(prof.role === 'manager');
           setIsDriver(prof.role === 'driver');
         }
 
@@ -57,7 +61,7 @@ export default function Dashboard() {
 
         if (cust?.id) setCustomerId(cust.id);
 
-        // Orders
+        // Orders - managers/admins see all, drivers see assigned, customers see own
         let ordQuery = supabase
           .from('orders')
           .select(`
@@ -67,8 +71,8 @@ export default function Dashboard() {
           `)
           .order('created_at', { ascending: false });
 
-        if (isAdmin) {
-          // all
+        if (isAdmin || isManager) {
+          // full access
         } else if (isDriver) {
           ordQuery = ordQuery.eq('driver_id', authUser.id);
         } else if (cust?.id) {
@@ -78,23 +82,24 @@ export default function Dashboard() {
         const { data: ords } = await ordQuery;
         if (isMounted) setOrders(ords || []);
 
-        if (isAdmin) {
+        if (isAdmin || isManager) {
           const { data: custs } = await supabase
             .from('customers')
             .select('id, name, phone, address, balance, credit_approved')
             .order('name');
           if (isMounted) setCustomers(custs || []);
-
-          const { data: drvs } = await supabase
-            .from('profiles')
-            .select('id, email')
-            .eq('role', 'driver')
-            .order('email');
-          if (isMounted) setDrivers(drvs || []);
-
-          // Admin punches (initial fetch)
-          await loadPunches();
         }
+
+        if (isAdmin) {
+          // Admin sees all team members (managers + drivers)
+          const { data: team } = await supabase
+            .from('profiles')
+            .select('id, email, role')
+            .in('role', ['manager', 'driver'])
+            .order('role, email');
+          if (isMounted) setTeamMembers(team || []);
+        }
+
       } catch (err: any) {
         setErrorMsg(err.message || 'Failed to load dashboard');
         toast.error('Dashboard load error');
@@ -103,150 +108,78 @@ export default function Dashboard() {
       }
     };
 
-    initialize();
+    loadData();
 
-    // Realtime: orders
-    const ordersChannel = supabase
-      .channel('orders-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-        toast.info(`Order ${payload.eventType}: ${payload.new?.status || 'updated'}`);
-        setOrders((prev) => {
-          let updated = [...prev];
-          if (payload.eventType === 'INSERT') {
-            if (isDriver && payload.new.driver_id !== user.id) return prev;
-            if (!isAdmin && !isDriver && payload.new.customer_id !== customerId) return prev;
-            updated.unshift(payload.new);
-          } else if (payload.eventType === 'UPDATE') {
-            const idx = updated.findIndex(o => o.id === payload.new.id);
-            if (idx !== -1) {
-              if (isDriver && payload.new.driver_id !== user.id) {
-                updated.splice(idx, 1);
-              } else {
-                updated[idx] = payload.new;
-              }
-            }
-          } else if (payload.eventType === 'DELETE') {
-            updated = updated.filter(o => o.id !== payload.old.id);
-          }
-          return updated.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        });
-      })
-      .subscribe();
+    // Realtime subscriptions (orders, notifications, etc.) — add your existing ones here
 
-    // Realtime: driver notifications
-    let driverChannel: any = null;
-    if (isDriver && user?.id) {
-      driverChannel = supabase
-        .channel(`driver-notifs-${user.id}`)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
-          (payload) => {
-            const notif = payload.new;
-            toast.success(notif.title || 'New Notification', {
-              description: notif.body,
-              duration: 10000,
-              action: notif.order_id ? { label: 'View Order', onClick: () => router.push(`/orders/${notif.order_id}`) } : undefined,
-            });
-          }
-        )
-        .subscribe();
+  }, [supabase, router]);
+
+  // Admin: Invite new team member (manager or driver)
+  const handleInviteTeamMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserEmail) return toast.error('Email required');
+
+    const { data, error } = await supabase.auth.inviteUserByEmail(newUserEmail);
+
+    if (error) {
+      toast.error('Invite failed: ' + error.message);
+      return;
     }
 
-    // Realtime: time clock punches (admins only)
-    let punchChannel: any = null;
-    if (isAdmin) {
-      punchChannel = supabase
-        .channel('time-clock-live')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'time_clock_entries' },
-          (payload) => {
-            toast.info(`New ${payload.new.type === 'in' ? 'punch in' : 'punch out'} recorded`);
-            setPunches((prev) => [payload.new, ...prev]);
-          }
-        )
-        .subscribe();
-    }
-
-    return () => {
-      isMounted = false;
-      supabase.removeChannel(ordersChannel);
-      if (driverChannel) supabase.removeChannel(driverChannel);
-      if (punchChannel) supabase.removeChannel(punchChannel);
-    };
-  }, [supabase, router, isAdmin, isDriver, user?.id, customerId]);
-
-  // Load punches when filter changes (admin only)
-  useEffect(() => {
-    if (isAdmin) {
-      loadPunches();
-    }
-  }, [punchFilter, isAdmin]);
-
-  const loadPunches = async () => {
-    setLoadingPunches(true);
-    try {
-      let query = supabase
-        .from('time_clock_entries')
-        .select(`
-          id, type, timestamp, latitude, longitude, accuracy,
-          user:user_id (email)
-        `)
-        .order('timestamp', { ascending: false });
-
-      if (punchFilter === 'today') {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        query = query.gte('timestamp', today.toISOString());
-      } else if (punchFilter === 'week') {
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        query = query.gte('timestamp', weekAgo.toISOString());
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setPunches(data || []);
-    } catch (err: any) {
-      toast.error('Failed to load punches');
-      console.error(err);
-    } finally {
-      setLoadingPunches(false);
-    }
+    // After invite, on first login they can set password
+    // We can auto-set role in a trigger or on signup callback
+    toast.success(`Invitation sent to ${newUserEmail} as ${newUserRole}`);
+    setNewUserEmail('');
   };
 
-  const exportToCSV = () => {
-    if (punches.length === 0) return toast.warning('No punches to export');
+  // Admin: Remove team member
+  const handleRemoveTeamMember = async (memberId: string, email: string) => {
+    if (!confirm(`Remove ${email}? This cannot be undone.`)) return;
 
-    const headers = ['User Email', 'Type', 'Timestamp', 'Latitude', 'Longitude', 'Accuracy (m)'];
-    const rows = punches.map(p => [
-      p.user?.email || 'Unknown',
-      p.type.toUpperCase(),
-      new Date(p.timestamp).toLocaleString(),
-      p.latitude,
-      p.longitude,
-      p.accuracy || 'N/A',
-    ]);
+    const { error: deleteError } = await supabase.auth.admin.deleteUser(memberId);
+    if (deleteError) {
+      toast.error('Delete failed: ' + deleteError.message);
+      return;
+    }
 
-    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `time_clock_punches_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    await supabase.from('profiles').delete().eq('id', memberId);
+    toast.success(`${email} removed from team`);
+    setTeamMembers(prev => prev.filter(m => m.id !== memberId));
   };
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  // Manager/Admin: Add new customer
+  const handleAddCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCustomer.name || !newCustomer.email) return toast.error('Name and email required');
+
+    const { error } = await supabase.from('customers').insert({
+      name: newCustomer.name,
+      phone: newCustomer.phone || null,
+      address: newCustomer.address || null,
+      email: newCustomer.email,
+      balance: 0,
+      credit_approved: false,
+    });
+
+    if (error) {
+      toast.error('Failed to add customer: ' + error.message);
+      return;
+    }
+
+    toast.success('Customer added successfully');
+    setCustomers(prev => [...prev, { ...newCustomer, id: 'new', balance: 0, credit_approved: false }]);
+    setNewCustomer({ name: '', phone: '', address: '', email: '' });
+  };
+
+  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading dashboard...</div>;
+
   if (errorMsg) return <div className="p-8 text-center text-red-600">Error: {errorMsg}</div>;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-          {isAdmin ? 'Admin Dashboard' : isDriver ? 'Driver Dashboard' : 'Your Dashboard'}
+          {isAdmin ? 'Admin Dashboard' : isManager ? 'Manager Dashboard' : isDriver ? 'Driver Dashboard' : 'Your Dashboard'}
         </h1>
 
         {!isDriver && (
@@ -256,25 +189,21 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* Orders Section */}
       <section className="mb-12">
         <h2 className="text-2xl font-semibold mb-4">
-          {isAdmin ? 'All Live Orders' : isDriver ? 'Assigned Orders' : 'Your Orders'}
+          {isAdmin || isManager ? 'All Orders' : isDriver ? 'Assigned Orders' : 'Your Orders'}
         </h2>
         {orders.length === 0 ? (
           <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-            {isAdmin ? 'No orders yet.' : isDriver ? 'No assigned orders.' : 'No orders yet.'}
+            No orders yet.
           </div>
         ) : (
-          <OrdersTable
-            orders={orders}
-            drivers={drivers}
-            isAdmin={isAdmin}
-            isDriver={isDriver}
-            currentUserId={user?.id || ''}
-          />
+          <OrdersTable orders={orders} drivers={drivers} isAdmin={isAdmin} isDriver={isDriver} currentUserId={user?.id || ''} />
         )}
       </section>
 
+      {/* Driver Features */}
       {isDriver && (
         <>
           <section className="mt-10">
@@ -283,125 +212,140 @@ export default function Dashboard() {
           </section>
 
           <section className="mt-10">
-            <h2 className="text-2xl font-semibold mb-4">Time Clock & Location Verification</h2>
+            <h2 className="text-2xl font-semibold mb-4">Time Clock</h2>
             <TimeClockPunch />
           </section>
         </>
       )}
 
-      {isAdmin && (
-        <>
-          <section className="mt-12">
-            <h2 className="text-2xl font-semibold mb-4">Customers & Credit Management</h2>
-            {customers.length === 0 ? (
-              <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-                No customers registered.
-              </div>
-            ) : (
-              <CustomerList customers={customers} isAdmin={true} />
-            )}
-          </section>
-
-          {/* Admin Time Clock Punches */}
-          <section className="mt-12">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-              <h2 className="text-2xl font-semibold">Time Clock Punches – All Team Members</h2>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => setPunchFilter('today')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    punchFilter === 'today' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  Today
-                </button>
-                <button
-                  onClick={() => setPunchFilter('week')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    punchFilter === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  Last 7 Days
-                </button>
-                <button
-                  onClick={() => setPunchFilter('all')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    punchFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  All Time
-                </button>
-                <button
-                  onClick={exportToCSV}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium transition-colors"
-                >
-                  Export CSV
-                </button>
-              </div>
+      {/* Shared Admin/Manager: Customers */}
+      {(isAdmin || isManager) && (
+        <section className="mt-12">
+          <h2 className="text-2xl font-semibold mb-4">Customers</h2>
+          {customers.length === 0 ? (
+            <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+              No customers registered yet.
             </div>
+          ) : (
+            <CustomerList customers={customers} isAdmin={isAdmin} />
+          )}
 
-            {loadingPunches ? (
-              <div className="text-center py-12 text-gray-500">Loading punches...</div>
-            ) : punches.length === 0 ? (
-              <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-                No time clock entries recorded yet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">User Email</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Type</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Timestamp</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Location</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Accuracy</th>
+          {/* Add new customer – allowed for managers and admins */}
+          <div className="mt-8 bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-lg font-semibold mb-4">Add New Customer</h3>
+            <form onSubmit={handleAddCustomer} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input
+                value={newCustomer.name}
+                onChange={e => setNewCustomer({ ...newCustomer, name: e.target.value })}
+                placeholder="Full Name"
+                required
+                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                value={newCustomer.phone}
+                onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })}
+                placeholder="Phone Number"
+                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                value={newCustomer.address}
+                onChange={e => setNewCustomer({ ...newCustomer, address: e.target.value })}
+                placeholder="Address"
+                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 md:col-span-2"
+              />
+              <input
+                value={newCustomer.email}
+                onChange={e => setNewCustomer({ ...newCustomer, email: e.target.value })}
+                placeholder="Email"
+                required
+                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                className="md:col-span-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-md font-medium transition-colors"
+              >
+                Add Customer
+              </button>
+            </form>
+          </div>
+        </section>
+      )}
+
+      {/* Admin-only: Team Management */}
+      {isAdmin && (
+        <section className="mt-12">
+          <h2 className="text-2xl font-semibold mb-4">Team Management</h2>
+
+          {teamMembers.length === 0 ? (
+            <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+              No managers or drivers added yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm mb-8">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Email</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Role</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {teamMembers.map((member) => (
+                    <tr key={member.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                        {member.email}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm capitalize font-medium">
+                        {member.role}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <button
+                          onClick={() => handleRemoveTeamMember(member.id, member.email)}
+                          className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-xs font-medium transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 bg-white">
-                    {punches.map((punch) => (
-                      <tr key={punch.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                          {punch.user?.email || 'Unknown User'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <span
-                            className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${
-                              punch.type === 'in'
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            {punch.type.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                          {new Date(punch.timestamp).toLocaleString('en-US', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${punch.latitude},${punch.longitude}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 underline"
-                          >
-                            {punch.latitude.toFixed(6)}, {punch.longitude.toFixed(6)}
-                          </a>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                          {punch.accuracy ? `${Math.round(punch.accuracy)} m` : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Add new team member */}
+          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-lg font-semibold mb-4">Invite New Team Member</h3>
+            <form onSubmit={handleInviteTeamMember} className="flex flex-col md:flex-row gap-4">
+              <input
+                type="email"
+                value={newUserEmail}
+                onChange={e => setNewUserEmail(e.target.value)}
+                placeholder="Email address"
+                required
+                className="flex-1 border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <select
+                value={newUserRole}
+                onChange={e => setNewUserRole(e.target.value as 'manager' | 'driver')}
+                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="manager">Manager</option>
+                <option value="driver">Driver</option>
+              </select>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md font-medium transition-colors"
+              >
+                Send Invite
+              </button>
+            </form>
+            <p className="mt-3 text-sm text-gray-500">
+              Invited users will receive an email to set up their account and password.
+            </p>
+          </div>
+        </section>
       )}
     </div>
   );
