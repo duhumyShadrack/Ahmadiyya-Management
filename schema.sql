@@ -104,3 +104,25 @@ create policy "Users view own notifications"
 create policy "Users mark as read"
   on notifications for update
   using (auth.uid() = user_id);
+
+-- Already in your schema.sql – just confirm
+create table driver_locations (
+  id uuid primary key default uuid_generate_v4(),
+  driver_id uuid references profiles(id) not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  last_updated timestamptz default now()
+);
+
+-- RLS: drivers can only upsert their own row
+alter table driver_locations enable row level security;
+
+create policy "Drivers update own location"
+  on driver_locations for all
+  using (driver_id = auth.uid())
+  with check (driver_id = auth.uid());
+
+-- Admins/drivers can read all (adjust as needed)
+create policy "View locations"
+  on driver_locations for select
+  using (true);
