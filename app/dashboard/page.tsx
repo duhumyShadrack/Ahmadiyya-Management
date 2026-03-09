@@ -3,6 +3,15 @@ import { redirect } from 'next/navigation';
 import OrdersTable from '@/components/OrdersTable';
 import CustomerList from '@/components/CustomerList';
 
+// ... inside Dashboard function, after getting user & profile
+if (!customer?.id && user.email) {
+  // Auto-create customer record if missing
+  await supabase.from('customers').upsert({
+    email: user.email,
+    name: user.user_metadata?.full_name || 'New Customer',
+    // phone/address can be added later via profile edit
+  });
+}
 export default async function Dashboard() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
