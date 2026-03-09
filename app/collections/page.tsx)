@@ -1,5 +1,7 @@
 // Add to imports
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 // CSV Export
 const exportCSV = () => {
