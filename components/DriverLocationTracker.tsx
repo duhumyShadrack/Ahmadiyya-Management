@@ -6,19 +6,19 @@ import { toast } from 'sonner';
 
 export default function DriverLocationTracker() {
   const supabase = createClient();
-  const [status, setStatus] = useState<'off' | 'requesting' | 'active' | 'denied'>('off');
+  const [status, setStatus] = useState<'active' | 'error' | 'initializing'>('initializing');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let watchId: number | null = null;
 
     const startTracking = () => {
-      setStatus('requesting');
+      setStatus('initializing');
       setError(null);
 
       if (!navigator.geolocation) {
-        setError('Geolocation is not supported by your browser');
-        setStatus('denied');
+        setError('Geolocation not supported on this device');
+        setStatus('error');
         return;
       }
 
@@ -34,26 +34,30 @@ export default function DriverLocationTracker() {
             });
 
             if (!res.ok) {
-              const err = await res.json();
-              throw new Error(err.error || 'Failed to send location');
+              const errData = await res.json();
+              throw new Error(errData.error || 'Location update failed');
             }
 
+            // Only set active once first successful update happens
             setStatus('active');
           } catch (err: any) {
+            console.error('Location send error:', err);
             setError(err.message);
-            toast.error('Location update failed');
-            setStatus('denied');
+            setStatus('error');
+            // Optional: toast only once, not every failure
+            // toast.error('Failed to send location – will retry');
           }
         },
         (err) => {
-          setError(err.message);
-          setStatus('denied');
-          toast.error(`Location permission denied: ${err.message}`);
+          console.error('Geolocation error:', err);
+          setError(err.message || 'Location access issue');
+          setStatus('error');
         },
         {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
+          enableHighAccuracy: true,      // most accurate possible
+          timeout: 10000,                // wait up to 10s for fix
+          maximumAge: 5000,              // accept position up to 5s old
+          distanceFilter: 10,            // only update if moved ≥10 meters
         }
       );
     };
@@ -63,66 +67,41 @@ export default function DriverLocationTracker() {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
       }
-      setStatus('off');
     };
 
-    // Auto-start tracking when component mounts (driver dashboard)
+    // Start immediately on mount (company phone = no prompt expected)
     startTracking();
 
-    return () => stopTracking();
+    // Restart when tab/app becomes visible again
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        stopTracking();
+        startTracking();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopTracking();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
+  // Minimal UI — silent operation preferred for company devices
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Live Location Sharing</h3>
-        <span
-          className={`px-3 py-1 rounded-full text-xs font-medium ${
-            status === 'active'
-              ? 'bg-green-100 text-green-800'
-              : status === 'denied'
-              ? 'bg-red-100 text-red-800'
-              : 'bg-gray-100 text-gray-800'
-          }`}
-        >
-          {status === 'active'
-            ? 'Active'
-            : status === 'requesting'
-            ? 'Requesting...'
-            : status === 'denied'
-            ? 'Denied'
-            : 'Off'}
-        </span>
-      </div>
-
-      {status === 'off' && (
-        <button
-          onClick={() => {
-            // Trigger permission request
-            navigator.geolocation.getCurrentPosition(() => {}, () => {}, {});
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md font-medium"
-        >
-          Enable Location Sharing
-        </button>
-      )}
-
-      {status === 'active' && (
-        <p className="text-green-700 text-sm">
-          Your location is being shared in real-time. Admins can see your position on the map.
-        </p>
-      )}
-
-      {error && (
-        <p className="mt-4 text-red-600 text-sm">
-          {error}
-          <button
-            onClick={() => window.location.reload()}
-            className="ml-3 text-blue-600 underline"
-          >
-            Retry
-          </button>
-        </p>
+    <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
+      {status === 'active' ? (
+        <div className="flex items-center text-sm text-green-700 font-medium">
+          <span className="w-3 h-3 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+          Location tracking active
+        </div>
+      ) : status === 'error' ? (
+        <div className="text-sm text-red-600">
+          Location tracking paused — {error || 'unknown issue'}
+        </div>
+      ) : (
+        <div className="text-sm text-gray-500">Initializing location tracking...</div>
       )}
     </div>
   );
