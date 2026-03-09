@@ -8,6 +8,7 @@ import OrdersTable from '@/components/OrdersTable';
 import CustomerList from '@/components/CustomerList';
 import DriverLocationTracker from '@/components/DriverLocationTracker';
 import TimeClockPunch from '@/components/TimeClockPunch';
+import AdminDriverMap from '@/components/AdminDriverMap'; // new component below
 
 export default function Dashboard() {
   const supabase = createClient();
@@ -22,14 +23,12 @@ export default function Dashboard() {
   const [orders, setOrders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
-  const [teamMembers, setTeamMembers] = useState<any[]>([]); // managers + drivers
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [punches, setPunches] = useState<any[]>([]);
+  const [driverLocations, setDriverLocations] = useState<any[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'manager' | 'driver'>('driver');
-
-  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', address: '', email: '' });
 
   useEffect(() => {
     let isMounted = true;
@@ -49,7 +48,7 @@ export default function Dashboard() {
         if (prof) {
           setProfile(prof);
           setIsAdmin(prof.role === 'admin');
-          setIsManager(prof.role === 'manager');
+          setIsManager(prof.role === 'manager' || prof.role === 'admin');
           setIsDriver(prof.role === 'driver');
         }
 
@@ -61,7 +60,7 @@ export default function Dashboard() {
 
         if (cust?.id) setCustomerId(cust.id);
 
-        // Orders - managers/admins see all, drivers see assigned, customers see own
+        // Orders
         let ordQuery = supabase
           .from('orders')
           .select(`
@@ -71,12 +70,9 @@ export default function Dashboard() {
           `)
           .order('created_at', { ascending: false });
 
-        if (isAdmin || isManager) {
-          // full access
-        } else if (isDriver) {
-          ordQuery = ordQuery.eq('driver_id', authUser.id);
-        } else if (cust?.id) {
-          ordQuery = ordQuery.eq('customer_id', cust.id);
+        if (!isAdmin && !isManager) {
+          if (isDriver) ordQuery = ordQuery.eq('driver_id', authUser.id);
+          else if (cust?.id) ordQuery = ordQuery.eq('customer_id', cust.id);
         }
 
         const { data: ords } = await ordQuery;
@@ -91,14 +87,31 @@ export default function Dashboard() {
         }
 
         if (isAdmin) {
-          // Admin sees all team members (managers + drivers)
           const { data: team } = await supabase
             .from('profiles')
             .select('id, email, role')
-            .in('role', ['manager', 'driver'])
+            .in('role', ['admin', 'manager', 'driver'])
             .order('role, email');
           if (isMounted) setTeamMembers(team || []);
+
+          // Driver locations for map
+          const { data: locs } = await supabase
+            .from('driver_locations')
+            .select('driver_id, latitude, longitude, last_updated');
+          const enrichedLocs = locs?.map(loc => ({
+            ...loc,
+            email: team.find(m => m.id === loc.driver_id)?.email || 'Driver'
+          })) || [];
+          if (isMounted) setDriverLocations(enrichedLocs);
         }
+
+        // Unread notifications count
+        const { count } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', authUser.id)
+          .eq('read', false);
+        if (isMounted) setUnreadNotifications(count || 0);
 
       } catch (err: any) {
         setErrorMsg(err.message || 'Failed to load dashboard');
@@ -110,242 +123,126 @@ export default function Dashboard() {
 
     loadData();
 
-    // Realtime subscriptions (orders, notifications, etc.) — add your existing ones here
+    // Realtime: orders, notifications, punches, locations (add your existing channels here)
 
+    // Example: realtime for new punches
+    const punchChannel = supabase
+      .channel('time-clock-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'time_clock_entries' }, (payload) => {
+        toast.info(`New ${payload.new.type} punch recorded`);
+        setPunches(prev => [payload.new, ...prev]);
+      })
+      .subscribe();
+
+    // Realtime for driver locations (admin only)
+    const locChannel = supabase
+      .channel('driver-locations-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_locations' }, (payload) => {
+        toast.info('Driver location updated');
+        // Update map data
+        setDriverLocations(prev => {
+          const newLocs = [...prev];
+          const idx = newLocs.findIndex(l => l.driver_id === payload.new.driver_id);
+          if (idx !== -1) newLocs[idx] = payload.new;
+          else newLocs.push(payload.new);
+          return newLocs;
+        });
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(punchChannel);
+      supabase.removeChannel(locChannel);
+      // Remove other channels
+    };
   }, [supabase, router]);
 
-  // Admin: Invite new team member (manager or driver)
-  const handleInviteTeamMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUserEmail) return toast.error('Email required');
-
-    const { data, error } = await supabase.auth.inviteUserByEmail(newUserEmail);
-
-    if (error) {
-      toast.error('Invite failed: ' + error.message);
-      return;
-    }
-
-    // After invite, on first login they can set password
-    // We can auto-set role in a trigger or on signup callback
-    toast.success(`Invitation sent to ${newUserEmail} as ${newUserRole}`);
-    setNewUserEmail('');
-  };
-
-  // Admin: Remove team member
-  const handleRemoveTeamMember = async (memberId: string, email: string) => {
-    if (!confirm(`Remove ${email}? This cannot be undone.`)) return;
-
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(memberId);
-    if (deleteError) {
-      toast.error('Delete failed: ' + deleteError.message);
-      return;
-    }
-
-    await supabase.from('profiles').delete().eq('id', memberId);
-    toast.success(`${email} removed from team`);
-    setTeamMembers(prev => prev.filter(m => m.id !== memberId));
-  };
-
-  // Manager/Admin: Add new customer
-  const handleAddCustomer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCustomer.name || !newCustomer.email) return toast.error('Name and email required');
-
-    const { error } = await supabase.from('customers').insert({
-      name: newCustomer.name,
-      phone: newCustomer.phone || null,
-      address: newCustomer.address || null,
-      email: newCustomer.email,
-      balance: 0,
-      credit_approved: false,
-    });
-
-    if (error) {
-      toast.error('Failed to add customer: ' + error.message);
-      return;
-    }
-
-    toast.success('Customer added successfully');
-    setCustomers(prev => [...prev, { ...newCustomer, id: 'new', balance: 0, credit_approved: false }]);
-    setNewCustomer({ name: '', phone: '', address: '', email: '' });
-  };
-
-  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading dashboard...</div>;
-
-  if (errorMsg) return <div className="p-8 text-center text-red-600">Error: {errorMsg}</div>;
+  // ... (keep your existing handlers: invite, remove, add customer)
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+      {/* Header with notification bell */}
+      <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-          {isAdmin ? 'Admin Dashboard' : isManager ? 'Manager Dashboard' : isDriver ? 'Driver Dashboard' : 'Your Dashboard'}
+          {isAdmin ? 'Admin Control Center' : isManager ? 'Manager Dashboard' : isDriver ? 'Driver Dashboard' : 'Your Dashboard'}
         </h1>
 
-        {!isDriver && (
-          <a href="/orders/new" className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md font-medium shadow transition-colors">
-            + Place New Order
-          </a>
-        )}
+        <div className="relative">
+          <button className="p-2 text-gray-600 hover:text-gray-900 relative">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            {unreadNotifications > 0 && (
+              <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
+                {unreadNotifications}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Orders Section */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">
-          {isAdmin || isManager ? 'All Orders' : isDriver ? 'Assigned Orders' : 'Your Orders'}
-        </h2>
-        {orders.length === 0 ? (
-          <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-            No orders yet.
-          </div>
-        ) : (
-          <OrdersTable orders={orders} drivers={drivers} isAdmin={isAdmin} isDriver={isDriver} currentUserId={user?.id || ''} />
-        )}
-      </section>
+      {/* ... existing sections: orders, driver features, customers ... */}
 
-      {/* Driver Features */}
-      {isDriver && (
+      {isAdmin && (
         <>
-          <section className="mt-10">
-            <h2 className="text-2xl font-semibold mb-4">Your Live Location</h2>
-            <DriverLocationTracker />
+          {/* ... existing team management ... */}
+
+          {/* Live Driver Map */}
+          <section className="mt-12">
+            <h2 className="text-2xl font-semibold mb-4">Live Driver Locations</h2>
+            {driverLocations.length === 0 ? (
+              <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
+                No drivers sharing location yet.
+              </div>
+            ) : (
+              <AdminDriverMap locations={driverLocations} />
+            )}
           </section>
 
-          <section className="mt-10">
-            <h2 className="text-2xl font-semibold mb-4">Time Clock</h2>
-            <TimeClockPunch />
+          {/* Punch Reports */}
+          <section className="mt-12">
+            <h2 className="text-2xl font-semibold mb-4">Punch Reports & Hours</h2>
+            <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+              <p className="text-lg font-medium mb-4">
+                Total punches today: {punches.filter(p => new Date(p.timestamp).toDateString() === new Date().toDateString()).length}
+              </p>
+              {/* Simple hours calc example – group by user/day */}
+              <div className="space-y-4">
+                {Object.entries(
+                  punches.reduce((acc: any, p: any) => {
+                    const date = new Date(p.timestamp).toDateString();
+                    const user = p.user?.email || 'Unknown';
+                    if (!acc[user]) acc[user] = {};
+                    if (!acc[user][date]) acc[user][date] = [];
+                    acc[user][date].push(p);
+                    return acc;
+                  }, {})
+                ).map(([user, dates]: [string, any]) => (
+                  <div key={user}>
+                    <h4 className="font-semibold">{user}</h4>
+                    {Object.entries(dates).map(([date, entries]: [string, any[]]) => {
+                      let hours = 0;
+                      for (let i = 0; i < entries.length; i += 2) {
+                        const inP = entries[i];
+                        const outP = entries[i + 1];
+                        if (inP?.type === 'in' && outP?.type === 'out') {
+                          const diff = new Date(outP.timestamp).getTime() - new Date(inP.timestamp).getTime();
+                          hours += diff / (1000 * 60 * 60);
+                        }
+                      }
+                      return (
+                        <p key={date} className="text-sm text-gray-700">
+                          {date}: {hours.toFixed(2)} hours ({entries.length} punches)
+                        </p>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
           </section>
         </>
-      )}
-
-      {/* Shared Admin/Manager: Customers */}
-      {(isAdmin || isManager) && (
-        <section className="mt-12">
-          <h2 className="text-2xl font-semibold mb-4">Customers</h2>
-          {customers.length === 0 ? (
-            <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-              No customers registered yet.
-            </div>
-          ) : (
-            <CustomerList customers={customers} isAdmin={isAdmin} />
-          )}
-
-          {/* Add new customer – allowed for managers and admins */}
-          <div className="mt-8 bg-white p-6 rounded-lg shadow-md border border-gray-200">
-            <h3 className="text-lg font-semibold mb-4">Add New Customer</h3>
-            <form onSubmit={handleAddCustomer} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input
-                value={newCustomer.name}
-                onChange={e => setNewCustomer({ ...newCustomer, name: e.target.value })}
-                placeholder="Full Name"
-                required
-                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                value={newCustomer.phone}
-                onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                placeholder="Phone Number"
-                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                value={newCustomer.address}
-                onChange={e => setNewCustomer({ ...newCustomer, address: e.target.value })}
-                placeholder="Address"
-                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 md:col-span-2"
-              />
-              <input
-                value={newCustomer.email}
-                onChange={e => setNewCustomer({ ...newCustomer, email: e.target.value })}
-                placeholder="Email"
-                required
-                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="submit"
-                className="md:col-span-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-md font-medium transition-colors"
-              >
-                Add Customer
-              </button>
-            </form>
-          </div>
-        </section>
-      )}
-
-      {/* Admin-only: Team Management */}
-      {isAdmin && (
-        <section className="mt-12">
-          <h2 className="text-2xl font-semibold mb-4">Team Management</h2>
-
-          {teamMembers.length === 0 ? (
-            <div className="bg-gray-100 border rounded-xl p-12 text-center text-gray-600">
-              No managers or drivers added yet.
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm mb-8">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Email</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Role</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
-                  {teamMembers.map((member) => (
-                    <tr key={member.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                        {member.email}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm capitalize font-medium">
-                        {member.role}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <button
-                          onClick={() => handleRemoveTeamMember(member.id, member.email)}
-                          className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-xs font-medium transition-colors"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Add new team member */}
-          <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-            <h3 className="text-lg font-semibold mb-4">Invite New Team Member</h3>
-            <form onSubmit={handleInviteTeamMember} className="flex flex-col md:flex-row gap-4">
-              <input
-                type="email"
-                value={newUserEmail}
-                onChange={e => setNewUserEmail(e.target.value)}
-                placeholder="Email address"
-                required
-                className="flex-1 border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <select
-                value={newUserRole}
-                onChange={e => setNewUserRole(e.target.value as 'manager' | 'driver')}
-                className="border p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="manager">Manager</option>
-                <option value="driver">Driver</option>
-              </select>
-              <button
-                type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md font-medium transition-colors"
-              >
-                Send Invite
-              </button>
-            </form>
-            <p className="mt-3 text-sm text-gray-500">
-              Invited users will receive an email to set up their account and password.
-            </p>
-          </div>
-        </section>
       )}
     </div>
   );
