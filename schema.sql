@@ -250,4 +250,26 @@ create policy "Ops view fleet"
   using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
 create policy "Ops view maintenance"
   on fleet_maintenance for all
+  using ((select role from profiles where id = auth.uid()) in ('admin', '
+
+  -- Job sites for geofence (already suggested, but confirm)
+create table job_sites (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  latitude numeric not null,
+  longitude numeric not null,
+  radius_meters numeric default 100,
+  address text,
+  created_at timestamptz default now()
+);
+
+-- RLS: admins/managers view/add, drivers view
+alter table job_sites enable row level security;
+
+create policy "Ops manage job sites"
+  on job_sites for all
   using ((select role from profiles where id = auth.uid()) in ('admin', 'manager'));
+
+create policy "Drivers view job sites"
+  on job_sites for select
+  using ((select role from profiles where id = auth.uid()) = 'driver');
