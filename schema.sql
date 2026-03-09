@@ -49,3 +49,11 @@ latitude float,
 longitude float,
 created_at timestamp default now()
 );
+
+-- Add credit/balance fields (if not already there)
+alter table public.customers
+  add column if not exists balance numeric(10,2) default 0,
+  add column if not exists credit_approved boolean default false;
+
+-- Optional: index for faster searches
+create index if not exists idx_customers_phone on public.customers(phone);
